@@ -23,36 +23,27 @@ options(dplyr.summarise.inform = FALSE)
 ## Extract configuration info
 if (sys.nframe() == 0L) {
   args = commandArgs(trailingOnly=TRUE)
-  ## if (length(args) == 0) {
-  ##   stop("Configuration file not supplied.", call. = FALSE)
-  ## }
   config = read_yaml(args[1])
-  aggr_period = args[2]
-  hindcast_output_dir = args[3]
+  obspath = args[2]
+  fcstpath = args[3]
+  aggr_period = args[4]
+  outputroot = args[5]
   args = commandArgs()
   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
   cwd <- dirname(regmatches(args, m))
 }
 ## TODO put these functions in an R package
 source(file.path(cwd, "utils.R"))
-## source(file.path(cwd, "io.R"))
 config = parse_config_io(config)
 
-## hindcast_output_dir <- file.path(config$output_data$root, config$output_data$hindcast)
-## if (dir.exists(hindcast_output_dir))
-##   unlink(hindcast_output_dir, recursive = TRUE)
-
 ## Variable against which to perform the mode-matching approach
-## TODO could put this in configuration
+## TODO put this in configuration
 match_var <- "nao"
 models <- c(
   config$ensemble_data$cmip5$models,
   config$ensemble_data$cmip6$models
 )
 climate_vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
-
-## ## Loop through aggregation periods (e.g. year 2-9, 2-5, 6-9)
-## for (j in 1:length(config$aggregation_period)) {
 
 ## Parse aggregation period specification
 ## period = config$aggregation_period[[j]]
@@ -69,21 +60,21 @@ if (!period$hindcast)
   next
 
 ## Make output directories
-## output_dir = file.path(hindcast_output_dir, label)
-output_dir = file.path(hindcast_output_dir, aggr_period)
-dir.create(output_dir, recursive = TRUE)
+outputdir = file.path(outputroot, aggr_period)
+dir.create(outputdir, recursive = TRUE)
 
 ## Load observed data, save for later use
-obs = get_obs(config$output_data$root, study_period, start = start, end = end)
+obs = get_obs(obspath, study_period, start = start, end = end)
 obs = obs %>%
   pivot_longer(all_of(climate_vars), names_to = "variable", values_to = "obs")
 write_parquet(
   obs,
-  file.path(output_dir, "obs_study_period.parquet")
+  file.path(outputdir, "obs_study_period.parquet")
 )
 lead_times = lead_tm
 ensemble_fcst_raw_complete = get_hindcast_data(
-  "data",
+  fcstpath,
+  ## "data",
   ## config$output_data$root,
   study_period,
   lead_times
@@ -113,7 +104,7 @@ ensemble_fcst =
   ungroup()
 write_parquet(
   ensemble_fcst,
-  file.path(output_dir, "ensemble_fcst.parquet")
+  file.path(outputdir, "ensemble_fcst.parquet")
 )
 
 ## Take the ensemble mean
@@ -185,7 +176,7 @@ fcst =
 
 write_parquet(
   fcst,
-  file.path(output_dir, "ensemble_mean_fcst.parquet")
+  file.path(outputdir, "ensemble_mean_fcst.parquet")
 )
 
 ## ################################### ##
@@ -219,7 +210,7 @@ nao_matched_ensemble_fcst =
   )
 write_parquet(
   nao_matched_ensemble_fcst,
-  file.path(output_dir, "matched_ensemble.parquet")
+  file.path(outputdir, "matched_ensemble.parquet")
 )
 nao_matched_ensemble_fcst_error =
   nao_matched_ensemble_fcst %>%
@@ -227,6 +218,6 @@ nao_matched_ensemble_fcst_error =
   summarize(any_na = any(is.na(value)), error = mean(error))
 write_parquet(
   nao_matched_ensemble_fcst_error,
-  file.path(output_dir, "matched_ensemble_error.parquet")
+  file.path(outputdir, "matched_ensemble_error.parquet")
 )
 ## }

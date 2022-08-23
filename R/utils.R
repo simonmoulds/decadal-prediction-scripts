@@ -201,9 +201,9 @@ parse_config_io = function(config) {
        ## modelling = modelling_section)
 }
 
-get_obs = function(dir, study_period, start = 2, end = 9) {
+get_obs = function(filename, study_period, start = 2, end = 9) {
   ## Read raw observed data
-  obs_raw = read_parquet(file.path(dir, "obs.parquet"))
+  obs_raw = read_parquet(filename) #file.path(dir, "obs.parquet"))
   ## Pivot from long to wide
   obs_raw = obs_raw %>% pivot_wider(names_from=variable, values_from=value)
   ## Assign a reference year to DJFM and select this season
@@ -247,11 +247,10 @@ get_obs = function(dir, study_period, start = 2, end = 9) {
   obs
 }
 
-get_hindcast_data = function(dir, study_period, lead_times) {
+get_hindcast_data = function(dataset, study_period, lead_times) {
 
-  ensemble_fcst_raw = open_dataset(
-    file.path(dir, "ensemble-forecast")
-  ) %>%
+  ensemble_fcst_raw =
+    open_dataset(dataset) %>%
     mutate(lead_time = season_year - init_year) %>%
     filter(lead_time %in% lead_times) %>%
     collect()
