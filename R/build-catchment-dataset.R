@@ -13,8 +13,9 @@ options(dplyr.summarise.inform = FALSE)
 if (sys.nframe() == 0L) {
   args = commandArgs(trailingOnly=TRUE)
   config = read_yaml(args[1])
-  aggr_period = args[2]
-  output_root = args[3]
+  obspath = args[2]
+  aggr_period = args[3]
+  outputroot = args[4]
   args = commandArgs()
   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
   cwd <- dirname(regmatches(args, m))
@@ -22,12 +23,13 @@ if (sys.nframe() == 0L) {
 source(file.path(cwd, "utils.R")) # TODO eventually put utils in package
 config = parse_config(config)
 
+## TODO put these in config
 study_period = 1960:2005
 extended_study_period = 1960:2015
 climate_vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
 
 observed_discharge_data =
-  open_dataset(file.path(output_root, "nrfa-discharge-summaries")) %>%
+  open_dataset(file.path(outputroot, "nrfa-discharge-summaries")) %>%
   collect()
 station_ids = observed_discharge_data$ID %>% unique
 n_stations = length(station_ids)
@@ -43,31 +45,31 @@ save_fcst = period$hindcast
 label = period$name
 error_label = period$error_name
 
-## output_dir = file.path(output_root, "hindcast-analysis", label, "input")
-output_dir = file.path(output_root, "analysis", label, "input")
+## output_dir = file.path(outputroot, "hindcast-analysis", label, "input")
+output_dir = file.path(outputroot, "analysis", label, "input")
 
 ## Load observed climate data
-obs = get_obs(output_root, extended_study_period, start = start, end = end)
+obs = get_obs(obspath, extended_study_period, start = start, end = end)
 
 ## Load ensemble data
 ensemble_fcst = read_parquet(
-  file.path(output_root, "analysis", label, "matched_ensemble.parquet")
+  file.path(outputroot, "analysis", label, "matched_ensemble.parquet")
 ) %>%
-##   file.path(output_root, config$output_data$hindcast, label, "matched_ensemble.parquet")
+##   file.path(outputroot, config$output_data$hindcast, label, "matched_ensemble.parquet")
 ## ) %>%
   mutate(lag = init_year - init_year_matched + 1)
 
 ensemble_fcst_error = read_parquet(
-  file.path(output_root, "analysis", error_label, "matched_ensemble_error.parquet")
+  file.path(outputroot, "analysis", error_label, "matched_ensemble_error.parquet")
 ) %>%
-##   file.path(output_root, config$output_data$hindcast, error_label, "matched_ensemble_error.parquet")
+##   file.path(outputroot, config$output_data$hindcast, error_label, "matched_ensemble_error.parquet")
 ## ) %>%
   mutate(across(contains("init_year"), as.integer)) %>%
   arrange(source_id, member, init_year, init_year_matched)
 
 ## Clean output subdirectory
 ## aggr_output_dir = file.path(hindcast_output_dir, label, "input")
-## ## aggr_output_dir = file.path(output_root, "hindcast-analysis", label, "input")
+## ## aggr_output_dir = file.path(outputroot, "hindcast-analysis", label, "input")
 ## if (dir.exists(aggr_output_dir))
 ##   unlink(aggr_output_dir, recursive = TRUE)
 ## dir.create(aggr_output_dir, recursive = TRUE)
@@ -124,7 +126,7 @@ for (i in 1:n_stations) {
     dis_djfm_aggregated %>%
     left_join(obs_aggregated, by="init_year")
   ## ## Write dataset to file
-  ## output_dir = file.path(output_root, "observed-analysis", label, "input")
+  ## output_dir = file.path(outputroot, "observed-analysis", label, "input")
   ## if (!dir.exists(output_dir)) {
   ##   dir.create(output_dir, recursive = TRUE)
   ## }

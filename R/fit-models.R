@@ -12,12 +12,9 @@ options(dplyr.summarise.inform = FALSE)
 
 if (sys.nframe() == 0L) {
   args = commandArgs(trailingOnly=TRUE)
-  ## if (length(args) == 0) {
-  ##   stop("Configuration file not supplied.", call. = FALSE)
-  ## }
   config = read_yaml(args[1])
   experiment = args[2]
-  output_root = args[3]
+  outputroot = args[3]
   args = commandArgs()
   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
   cwd <- dirname(regmatches(args, m))
@@ -25,23 +22,11 @@ if (sys.nframe() == 0L) {
 source(file.path(cwd, "utils.R"))
 config = parse_config(config)
 
-## if (is.null(opt$options$experiment)) {
-##   print_help(opt_parser)
-##   stop("At least one experiment must be specified")
-## } else {
-##   experiments = opt$options$experiment %>% str_split(",") %>% `[[`(1) %>% str_trim()
-## }
-
-## if (!all(experiments %in% names(config$modelling))) {
-##   print_help(opt_parser)
-##   stop("Specified experiments do not exist in config file")
-## }
-
 experiment_conf = config$modelling[[experiment]]
 for (j in 1:length(experiment_conf$aggregation_periods)) {
   label = experiment_conf$aggregation_periods[j]
-  input_dir = file.path(output_root, "analysis", label, "input")
-  output_dir = file.path(output_root, "analysis", experiment, label)
+  input_dir = file.path(outputroot, "analysis", label, "input")
+  output_dir = file.path(outputroot, "analysis", experiment, label)
 
   ## Load input dataset
   ds =
@@ -51,17 +36,11 @@ for (j in 1:length(experiment_conf$aggregation_periods)) {
     dplyr::select(-lead_time)
 
   ## Identify subsets
-  ## has_subset = "subset" %in% names(ds)
-  ## if (has_subset) {
   subsets = experiment_conf$subsets
   ds_subsets = ds$subset %>% unique() %>% sort()
   if (!all(subsets %in% ds_subsets)) {
     stop("Dataset does not contain all specified subsets")
   }
-  ## } else {
-  ##   ds$subset = "full"
-  ##   subsets = ds$subset %>% unique() %>% sort()
-  ## }
 
   ## Create output directories
   subdirs = c("prediction", "skill") #, "catchment_plots")
@@ -70,11 +49,6 @@ for (j in 1:length(experiment_conf$aggregation_periods)) {
     unlink(sd_output_dir, recursive = TRUE)
     dir.create(sd_output_dir, recursive = TRUE)
   }
-  ## for (m in 1:length(subsets)) {
-  ##   plot_output_dir = file.path(output_dir, "catchment_plots", subsets[m])
-  ##   unlink(plot_output_dir, recursive = TRUE)
-  ##   dir.create(plot_output_dir, recursive = TRUE)
-  ## }
   ## Set predictand
   ds[["Q"]] = ds[[experiment_conf$predictand]]
   station_ids = ds$ID %>% unique() %>% sort()

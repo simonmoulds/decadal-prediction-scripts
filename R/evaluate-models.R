@@ -21,7 +21,7 @@ options(dplyr.summarise.inform = FALSE)
 if (sys.nframe() == 0L) {
   args = commandArgs(trailingOnly=TRUE)
   config = read_yaml(args[1])
-  output_dir = args[2]
+  outputdir = args[2]
   args = commandArgs()
   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
   cwd <- dirname(regmatches(args, m))
@@ -30,7 +30,7 @@ source(file.path(cwd, "utils.R"))
 source(file.path(cwd, "plotting.R"))
 
 config = parse_config(config)
-output_root <- "data" # FIXME
+## output_root <- "data" # FIXME
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -49,7 +49,7 @@ load_skill_scores <- function(config, experiment) {
   period_skill_scores_list = list()
   for (i in 1:length(aggregation_periods)) {
     period_skill_scores_list[[i]] = open_dataset(
-      file.path(output_root, 'analysis', experiment, aggregation_periods[i], "skill")
+      file.path(outputdir, 'analysis', experiment, aggregation_periods[i], "skill")
     ) %>% collect()
   }
   skill_scores = do.call("rbind", period_skill_scores_list) %>% as_tibble()
@@ -365,7 +365,7 @@ p =
         plot.tag = element_text(vjust = -0.7, size = tag_label_size, face="bold"))
 
 ## Include both modelled and observed results
-ggsave(file.path(output_dir, "fig1.png"), plot = p, width = 6, height = 7.25, units = "in")
+ggsave(file.path(outputdir, "fig/fig1.png"), plot = p, width = 6, height = 7.25, units = "in")
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -531,7 +531,7 @@ p =
   theme(plot.tag.position = c(0.14, 1.005),
         plot.tag = element_text(vjust = -0.7, size = tag_label_size, face="bold"))
 
-ggsave(file.path(output_dir, "fig2.png"), plot = p, width = 6, height = 6, units = "in")
+ggsave(file.path(outputdir, "fig/fig2.png"), plot = p, width = 6, height = 6, units = "in")
 
 ## ## ####################################################### ##
 ## ## ####################################################### ##
@@ -645,7 +645,7 @@ ids_best = head(skill$ID, n=5)
 
 ## dataset_dir = config$modelling[["hindcast"]]$input_dataset
 predictions = open_dataset(
-  file.path(output_root, "analysis", "hindcast", "yr2to9_lag", "prediction")
+  file.path(outputdir, "analysis", "hindcast", "yr2to9_lag", "prediction")
 ) %>% collect() %>%
   filter(model %in% "P_T" & subset %in% c("full", "best_n")) %>%
   mutate(subset = ifelse(subset == "best_n", "NAO-matched ensemble", "Full ensemble"))
@@ -816,7 +816,7 @@ p6 = p6 + theme(panel.grid.major = element_line(size = 0.25),
 p = p1 + p2 + p3 + p4 + p5 + p6 + plot_layout(ncol = 3, nrow = 2, widths = c(2, 2, 2)) & theme(legend.position = "bottom")
 p = p + plot_layout(guides = "collect")
 
-ggsave(file.path(output_dir, "fig3.png"), plot = p, width = 5, height = 5, units = "in")
+ggsave(file.path(outputdir, "fig/fig3.png"), plot = p, width = 5, height = 5, units = "in")
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -881,7 +881,7 @@ p =
     ## legend.title = element_text(size = legend_title_size),
     legend.text = element_text(size = legend_label_size))
 
-ggsave(file.path(output_dir, "fig4.png"), plot = p, width = 5, height = 4, units = "in")
+ggsave(file.path(outputdir, "fig/fig4.png"), plot = p, width = 5, height = 4, units = "in")
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -979,7 +979,7 @@ turquoise <- "#FC8D62"
 ## Discharge
 
 d <-
-  open_dataset(file.path(output_root, "nrfa-discharge-summaries")) %>%
+  open_dataset(file.path(outputdir, "nrfa-discharge-summaries")) %>%
   collect() %>%
   filter(ID %in% 21017 & clim_season %in% "DJFM" & season_year %in% 1978:1991) %>%
   mutate(Q_95_multiyear = rollapply(Q_95, 8, mean, align = "left", fill = NA)) %>%
@@ -1073,7 +1073,7 @@ p = p +
   theme(plot.tag.position = c(0.04, 1.01),
         plot.tag = element_text(vjust = -0.7, size = tag_label_size, face="bold"))
 
-ggsave(file.path(output_dir, "figS1.png"), plot = p, width = 6, height = 6, units = "in")
+ggsave(file.path(outputdir, "fig/figS1.png"), plot = p, width = 6, height = 6, units = "in")
 
 ## ## ####################################################### ##
 ## ## ####################################################### ##
@@ -1085,7 +1085,7 @@ ggsave(file.path(output_dir, "figS1.png"), plot = p, width = 6, height = 6, unit
 
 load_fcst <- function(aggregation_period) {
   fcst = read_parquet(
-    file.path(output_root, "analysis", aggregation_period, "ensemble_mean_fcst.parquet")
+    file.path(outputdir, "analysis", aggregation_period, "ensemble_mean_fcst.parquet")
   )
   fcst <-
     fcst %>%
@@ -1534,7 +1534,7 @@ ids_worst = tail(skill$ID, n=5)
 
 dataset_dir = config$modelling[["hindcast"]]$input_dataset
 predictions = open_dataset(
-  file.path(output_root, "analysis", "hindcast", "yr2to9_lag", "prediction")
+  file.path(outputdir, "analysis", "hindcast", "yr2to9_lag", "prediction")
 ) %>%
   collect() %>%
   filter(model %in% c("P", "P_T", "NAO_P_T"))
@@ -1628,7 +1628,7 @@ p = p1 + p2 + p3 + p4 + p6 + p7 + p8 + p9 +
     legend.box.just = "left"
   )
 p = p + plot_layout(guides = "collect")
-ggsave(file.path(output_dir, "figS2.png"), plot = p, width = 6, height = 5, units = "in")
+ggsave(file.path(outputdir, "fig/figS2.png"), plot = p, width = 6, height = 5, units = "in")
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -1641,15 +1641,15 @@ ggsave(file.path(output_dir, "figS2.png"), plot = p, width = 6, height = 5, unit
 full_fcst = load_fcst("yr2to9_lag")
 
 obs = read_parquet(
-  file.path(output_root, "analysis", "yr2to9_lag", "obs_study_period.parquet")
+  file.path(outputdir, "analysis", "yr2to9_lag", "obs_study_period.parquet")
 )
 
 ensemble_fcst = read_parquet(
-  file.path(output_root, "analysis", "yr2to9_lag", "ensemble_fcst.parquet")
+  file.path(outputdir, "analysis", "yr2to9_lag", "ensemble_fcst.parquet")
 )
 
 nao_matched_ensemble_fcst = read_parquet(
-  file.path(output_root, "analysis", "yr2to9_lag", "matched_ensemble.parquet")
+  file.path(outputdir, "analysis", "yr2to9_lag", "matched_ensemble.parquet")
 )
 
 ## Select n best performing members
@@ -2296,7 +2296,7 @@ p =
   theme(plot.tag.position = c(0.03, 1),
         plot.tag = element_text(vjust = -0.7, size = tag_label_size, face="bold"))
 
-ggsave(file.path(output_dir, "figS3.png"), p, width = 6, height = 7, units = "in")
+ggsave(file.path(outputdir, "fig/figS3.png"), p, width = 6, height = 7, units = "in")
 
 ## ####################################################### ##
 ## ####################################################### ##
@@ -2308,7 +2308,7 @@ ggsave(file.path(output_dir, "figS3.png"), p, width = 6, height = 7, units = "in
 
 dataset_dir = config$modelling[["hindcast"]]$input_dataset
 predictions = open_dataset(
-  file.path(output_root, "analysis", "hindcast", "yr2to9_lag", "prediction")
+  file.path(outputdir, "analysis", "hindcast", "yr2to9_lag", "prediction")
 ) %>%
   collect() %>%
   filter(model %in% "P_T" & subset %in% c("full", "best_n")) %>%
@@ -2390,7 +2390,7 @@ p =
         plot.tag = element_text(#vjust = -0.7,
                                 hjust = 0, size = tag_label_size, face="bold"))
 
-ggsave(file.path(output_dir, "figS4.png"), plot = p, width = 5, height = 4.5, units = "in")
+ggsave(file.path(outputdir, "fig/figS4.png"), plot = p, width = 5, height = 4.5, units = "in")
 
 ## ## ####################################################### ##
 ## ## ####################################################### ##
