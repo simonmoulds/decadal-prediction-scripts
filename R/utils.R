@@ -3,7 +3,10 @@
 
 library(tidyverse)
 library(zoo)
+library(RcppRoll)
 library(lubridate)
+library(scoringRules)
+library(SpecsVerification)
 
 check_file_exists = function(fn) {
   if (file.exists(fn)) {
@@ -13,32 +16,29 @@ check_file_exists = function(fn) {
   }
 }
 
-parse_config_observed = function(config) {
+parse_config_observed <- function(config, input_data_root) {
   items = config$observed
-  giss = items$giss %>% check_file_exists()
-  gpcc = items$gpcc %>% check_file_exists()
-  hadcrut4 = items$hadcrut4 %>% check_file_exists()
-  hadslp2r = items$hadslp2r %>% check_file_exists()
-  ncdc = items$ncdc %>% check_file_exists()
+  giss = file.path(input_data_root, items$giss$subdirectory) %>% check_file_exists()
+  gpcc = file.path(input_data_root, items$gpcc$subdirectory) %>% check_file_exists()
+  hadcrut4 = file.path(input_data_root, items$hadcrut4$subdirectory) %>% check_file_exists()
+  hadslp2r = file.path(input_data_root, items$hadslp2r$subdirectory) %>% check_file_exists()
+  ncdc = file.path(input_data_root, items$ncdc$subdirectory) %>% check_file_exists()
   list(giss = giss, gpcc = gpcc, hadcrut4 = hadcrut4, hadslp2r = hadslp2r, ncdc = ncdc)
 }
 
-parse_config_ensemble = function(config) {
-  ## TODO
+parse_config_ensemble <- function(config, input_data_root) {
   return(config$ensemble)
 }
 
-parse_config_aux = function(config) {
-  ## TODO
+parse_config_aux <- function(config, input_data_root) {
   return(config$aux)
 }
 
-parse_config_output = function(config) {
-  ## TODO
+parse_config_output <- function(config) {
   return(config$output)
 }
 
-parse_config_subset = function(config) {
+parse_config_subset <- function(config) {
   if (!"subset" %in% names(config))
     return(NULL)
 
@@ -85,7 +85,7 @@ parse_config_subset = function(config) {
   config_subset
 }
 
-parse_config_aggregation_period = function(config) {
+parse_config_aggregation_period <- function(config) {
   nms = sapply(config$aggregation_period, FUN=function(x) x$name)
   config_aggregation_period =
     vector(mode = "list", length = length(nms)) %>%
@@ -122,7 +122,7 @@ parse_config_aggregation_period = function(config) {
   config_aggregation_period
 }
 
-parse_config_modelling = function(config) {
+parse_config_modelling <- function(config) {
   datasets = sapply(config$modelling, FUN=function(x) x$name)
   keys = c(
     "name", "input_dataset", "predictand",
@@ -165,14 +165,14 @@ parse_config_modelling = function(config) {
   return(config_modelling)
 }
 
-parse_config = function(config) {
-  observed_section = parse_config_observed(config)
-  ensemble_section = parse_config_ensemble(config)
-  aux_data_section = parse_config_aux(config)
-  output_section = parse_config_output(config)
-  subset_section = parse_config_subset(config)
-  aggregation_period_section = parse_config_aggregation_period(config)
-  modelling_section = parse_config_modelling(config)
+parse_config <- function(config, input_data_root) {
+  observed_section <- parse_config_observed(config, input_data_root)
+  ensemble_section <- parse_config_ensemble(config, input_data_root)
+  aux_data_section <- parse_config_aux(config, input_data_root)
+  output_section <- parse_config_output(config)
+  subset_section <- parse_config_subset(config)
+  aggregation_period_section <- parse_config_aggregation_period(config)
+  modelling_section <- parse_config_modelling(config)
   ## TODO checks (e.g. aggregation periods used in modelling section defined)
   list(observed_data = observed_section,
        ensemble_data = ensemble_section,
@@ -183,10 +183,10 @@ parse_config = function(config) {
        modelling = modelling_section)
 }
 
-parse_config_io = function(config) {
-  observed_section = parse_config_observed(config)
-  ensemble_section = parse_config_ensemble(config)
-  aux_data_section = parse_config_aux(config)
+parse_config_io <- function(config, input_data_root) {
+  observed_section <- parse_config_observed(config, input_data_root)
+  ensemble_section <- parse_config_ensemble(config, input_data_root)
+  aux_data_section <- parse_config_aux(config, input_data_root)
   output_section = parse_config_output(config)
   ## subset_section = parse_config_subset(config)
   aggregation_period_section = parse_config_aggregation_period(config)
@@ -201,9 +201,12 @@ parse_config_io = function(config) {
        ## modelling = modelling_section)
 }
 
-get_obs = function(filename, study_period, start = 2, end = 9) {
+get_obs <- function(filename,
+                    study_period,
+                    start = 2,
+                    end = 9) {
   ## Read raw observed data
-  obs_raw = read_parquet(filename) #file.path(dir, "obs.parquet"))
+  obs_raw = read_parquet(filename)
   ## Pivot from long to wide
   obs_raw = obs_raw %>% pivot_wider(names_from=variable, values_from=value)
   ## Assign a reference year to DJFM and select this season
@@ -212,15 +215,103 @@ get_obs = function(filename, study_period, start = 2, end = 9) {
     filter(month %in% c(12, 1, 2, 3)) %>%
     group_by(season_year) %>%
     filter(n() == 4) # Only complete DJFM seasons
-  vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
+
+  ## ## TESTING
+  ## winter <- which.min(months) != 1
+  ## next_year_months <- seq(min(months), months[length(months)])
+  ## obs = obs_raw %>%
+  ##   filter(month %in% c(12, 1, 2, 3)) #%>%
+  ##   mutate(season_year = ifelse(month %in% c(1,2,3), year-1, year)) %>%
+  ##   group_by(season_year) %>%
+  ##   filter(n() == 4) # Only complete DJFM seasons
+  ## ## END TESTING
 
   ## Compute average seasonal values
-  obs = obs %>% summarize(across(all_of(vars), mean))
+  vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
+  obs = obs %>% summarize(across(starts_with(vars), mean))
+
+  obs_antecedent <- obs_raw %>%
+    filter(month %in% c(9, 10, 11)) %>%
+    mutate(season_year = year) %>%
+    group_by(season_year) #%>%
+    ## filter(n() == 3) # Only complete SON seasons
+
+  antecedent_vars <- c("european_precip", "uk_temp", "uk_precip")
+  obs_antecedent <- obs_antecedent %>%
+    summarize(across(starts_with(antecedent_vars), mean)) %>%
+    rename_at(vars(starts_with(antecedent_vars)), function(x) paste0(x, "_antecedent"))
+
+  obs <- obs %>% left_join(obs_antecedent, by="season_year")
+  all_vars <- names(obs)
+  all_vars <- all_vars[!all_vars %in% "season_year"]
+  ## obs = obs %>% summarize(across(all_of(vars), mean))
+  ## all_antecedent_vars <- names(obs_antecedent)
+  ## all_antecedent_vars <- all_antecedent_vars[!all_antecedent_vars %in% "season_year"]
 
   ## Calculate decadal means [function defined in `utils.R`]
   ## N.B. in this data frame season year is the year in which
   ## the start of the season falls [i.e. for DJFM it is the
-  ## year of December]
+  ## year in which December falls
+  obs = rolling_fun(
+    yrs = obs$season_year,
+    data = obs,
+    ## cols = vars,
+    cols = all_vars,
+    funs = mean,
+    start = start, end = end
+  )
+  ## The result of the above function is that the value for each
+  ## initialization year is the mean of the observed values for
+  ## 2-9 years ahead. For example, the value assigned to the 1960
+  ## initialization year is the average value for years 1961 to 1968.
+  ## This essentially makes the observations comparable with the
+  ## forecasts.
+
+  ## Filter study period
+  obs = obs %>% filter(init_year %in% study_period)
+  compute_anomaly = function(x) x - mean(x, na.rm = TRUE)
+  obs =
+    obs %>%
+    ## mutate(across(all_of(vars), compute_anomaly)) %>%
+    mutate(across(all_of(all_vars), compute_anomaly)) %>%
+    ungroup()
+  ## ## Convert to long format
+  ## obs = obs %>% gather(variable, obs, -init_year)
+  obs
+}
+
+get_obs_new <- function(dataset,
+                        study_period,
+                        start = 2,
+                        end = 9,
+                        vars = c("nao"),
+                        months = c(12, 1, 2, 3)) {
+
+  ## Read raw observed data
+  ## obs_raw = read_parquet(filename)
+  ## Pivot from long to wide
+  obs_raw = dataset %>% pivot_wider(names_from=variable, values_from=value)
+  ## Select season
+  obs <- obs_raw %>% filter(month %in% months)
+  if (which.min(months) != 1) {
+    ## This adjusts season_year if the season covers two years (e.g.DJF)
+    next_year_months <- seq(min(months), months[length(months)])
+    obs <-
+      obs %>%
+      mutate(season_year = ifelse(month %in% next_year_months, year-1, year))
+  } else {
+    obs <- obs %>% mutate(season_year = year)
+  }
+  ## Restrict to complete seasons
+  obs <- obs %>% group_by(season_year) %>% filter(n() == length(months))
+
+  ## Compute average seasonal values
+  obs = obs %>% summarize(across(starts_with(vars), mean))
+
+  ## Calculate decadal means [function defined in `utils.R`]
+  ## N.B. in this data frame season year is the year in which
+  ## the start of the season falls [i.e. for DJFM it is the
+  ## year in which December falls
   obs = rolling_fun(
     yrs = obs$season_year,
     data = obs,
@@ -242,120 +333,216 @@ get_obs = function(filename, study_period, start = 2, end = 9) {
     obs %>%
     mutate(across(all_of(vars), compute_anomaly)) %>%
     ungroup()
-  ## ## Convert to long format
-  ## obs = obs %>% gather(variable, obs, -init_year)
+
+  ## Convert to long format
+  obs =
+    obs %>%
+    pivot_longer(starts_with(vars), names_to = "variable", values_to = "obs")
   obs
 }
 
-get_hindcast_data = function(dataset, study_period, lead_times) {
+ensemble_fcst_unit_conversion <- function(x) {
+  x <- x %>%
+    mutate(across(matches("^nao$"), function(x) x / 100)) %>%
+    mutate(across(matches("^ea$"), function(x) x / 100)) %>%
+    mutate(across(contains("precip"), function(x) x * 60 * 60 * 24))
+  x
+}
 
-  ensemble_fcst_raw =
-    open_dataset(dataset) %>%
+get_hindcast_data_new <- function(dataset,
+                                  study_period,
+                                  lead_times,
+                                  vars,
+                                  months) {
+
+  ## ens_fcst_raw = dataset %>% pivot_wider(names_from=variable, values_from=value)
+  ## Select season
+  ens_fcst <- dataset %>% filter(month %in% months)
+  if (which.min(months) != 1) {
+    ## This adjusts season_year if the season covers two years (e.g.DJF)
+    next_year_months <- seq(min(months), months[length(months)])
+    ens_fcst <-
+      ens_fcst %>%
+      mutate(season_year = ifelse(month %in% next_year_months, year-1, year))
+  } else {
+    ens_fcst <- ens_fcst %>% mutate(season_year = year)
+  }
+  ens_fcst <- ens_fcst %>% collect()
+  ens_fcst <- ens_fcst %>% pivot_wider(names_from=variable, values_from=value)
+  ## Restrict to complete seasons
+  group_vars <- c("season_year", "project", "mip", "source_id", "member", "init_year")
+  ens_fcst <- ens_fcst %>%
+    group_by_at(group_vars) %>%
+    filter(n() == length(months)) %>%
+    arrange(init_year, member, source_id, year, month)
+
+  ## ## Compute average seasonal values
+  ## ens_fcst <- ens_fcst %>% group_by_at(group_vars) %>% summarize(value = mean(value), n = n())
+
+  ens_fcst <- ens_fcst %>% summarize(across(starts_with(vars), mean))
+  ens_fcst <-
+    ens_fcst %>%
+    mutate(lead_time = season_year - init_year + 1) %>%
+    filter(lead_time %in% lead_times)
+
+  ## Select data for the study period
+  ens_fcst_complete <- ens_fcst %>% filter(init_year %in% study_period)
+
+  ## Do unit conversion
+  ens_fcst_complete <- ens_fcst_complete %>% ensemble_fcst_unit_conversion()
+
+  ## Aggregate over lead times
+  group_vars = c("project", "mip", "source_id", "member", "init_year")
+  ens_fcst_complete <-
+    ens_fcst_complete %>%
+    group_by_at(group_vars) %>%
+    summarize(across(starts_with(vars), mean))
+
+  ## Complete anomalies over the study period
+  compute_anomaly <- function(x) x - mean(x, na.rm = TRUE)
+  anomaly_group_vars <- c("source_id", "member")
+  ens_fcst_complete <-
+    ens_fcst_complete %>%
+    group_by_at(anomaly_group_vars) %>%
+    mutate(across(starts_with(vars), compute_anomaly)) %>%
+    ungroup()
+
+  ## Pivot longer
+  ens_fcst_complete <-
+    ens_fcst_complete %>%
+    pivot_longer(-all_of(group_vars), names_to="variable", values_to="value")
+  ens_fcst_complete
+}
+
+get_hindcast_data <- function(dataset,
+                              study_period,
+                              lead_times,
+                              all_ids = TRUE,
+                              id=NA) {
+
+  ensemble_fcst_raw = open_dataset(dataset)
+  if (!all_ids & !is.na(id)) {
+    ensemble_fcst_raw <-
+      ensemble_fcst_raw %>%
+      filter(ID %in% id)
+  }
+  ensemble_fcst_raw <-
+    ensemble_fcst_raw %>%
+    ## open_dataset(dataset) %>%
     mutate(lead_time = season_year - init_year) %>%
     filter(lead_time %in% lead_times) %>%
     collect()
-
   ## Pivot from long to wide format
-  ensemble_fcst_raw = ensemble_fcst_raw %>%
+  ensemble_fcst_raw <- ensemble_fcst_raw %>%
     pivot_wider(names_from=variable, values_from=value)
-
   ## Unit conversion
-  ensemble_fcst_raw =
+  ensemble_fcst_raw <-
     ensemble_fcst_raw %>%
-    mutate(nao = nao / 100) %>%
-    mutate(ea = ea / 100) %>%
-    mutate(european_precip = european_precip * 60 * 60 * 24) %>%
-    mutate(uk_precip = uk_precip * 60 * 60 * 24)
-
+    mutate(across(matches("^nao$"), function(x) x / 100)) %>%
+    mutate(across(matches("^ea$"), function(x) x / 100)) %>%
+    mutate(across(starts_with("european_precip"), function(x) x * 60 * 60 * 24)) %>%
+    mutate(across(starts_with("uk_precip"), function(x) x * 60 * 60 * 24))
+    ## mutate(european_precip = european_precip * 60 * 60 * 24) %>%
+    ## mutate(uk_precip = uk_precip * 60 * 60 * 24)
   ## ## Correct initialisation years for GFDL data, which appear to be incorrect
   ## gfdl_index = ensemble_fcst_raw$source_id %in% "GFDL-CM2p1"
   ## ensemble_fcst_raw$init_year[gfdl_index] = ensemble_fcst_raw$init_year[gfdl_index] - 1
-
   ensemble_fcst_raw_complete =
     ensemble_fcst_raw %>%
     filter(init_year %in% study_period)
-
-  ## ## OLD:
-  ## ## It's helpful to ensure that the dataset contains all
-  ## ## unique combinations of experiment and initialisation
-  ## ## years [e.g. CanCM4/r10i1p1/1960] so that we can
-  ## ## investigate missingness. Here we do this by treating
-  ## ## each model in turn and using expand_grid(...) to get
-  ## ## the unique combinations. We merge this with the model
-  ## ## dataframe such that any combination with missing data
-  ## ## is assigned a value of NA, rather than  being absent
-  ## ## from the dataset.
-  ## ## all_models = unique(ensemble_fcst_raw[["source_id"]])
-  ## all_years = ensemble_fcst_raw[["init_year"]] %>% unique %>% sort
-  ## all_years = seq(min(all_years), max(all_years))
-  ## complete_data = list()
-  ## for (i in 1:length(models)) {
-  ##   model = models[i]
-  ##   model_ensemble_fcst = ensemble_fcst_raw %>% filter(source_id %in% model)
-  ##   keys = expand_grid(
-  ##     project = unique(model_ensemble_fcst[["project"]]),
-  ##     source_id = model,
-  ##     mip = unique(model_ensemble_fcst[["mip"]]),
-  ##     member = unique(model_ensemble_fcst[["member"]]),
-  ##     init_year = all_years
-  ##   ) %>%
-  ##     arrange(source_id, member, init_year)
-  ##   model_ensemble_fcst =
-  ##     model_ensemble_fcst %>%
-  ##     right_join(keys)
-  ##   complete_data[[i]] = model_ensemble_fcst
-  ## }
-
-  ## ## Put data together again
-  ## ensemble_fcst_raw_complete = do.call(rbind, complete_data)
-
-  ## ## Select data for study period
-  ## ensemble_fcst_raw_complete =
-  ##   ensemble_fcst_raw_complete %>%
-  ##   filter(init_year %in% study_period)
-  ## ## Investigate missingness
-  ## tmp = ensemble_fcst_raw_complete
-  ## missing_ensemble_members =
-  ##   tmp %>%
-  ##   group_by(project, source_id, init_year) %>%
-  ##   summarize(ensemble_size=sum(is.na(nao))) %>%
-  ##   mutate(ensemble_size=ifelse(ensemble_size == 0, NA, ensemble_size)) %>%
-  ##   arrange(desc(project), desc(source_id)) %>%
-  ##   filter(!is.na(ensemble_size))
-  ## missing_ensemble_members
-
-  ## ## Ensemble size considering all members:
-  ## total_ensemble_size =
-  ##   tmp %>%
-  ##   filter(!is.na(nao)) %>%
-  ##   group_by(init_year) %>%
-  ##   summarize(ensemble_size=n()) %>%
-  ##   filter(init_year %in% study_period)
-  ## total_ensemble_size
-
-  ## p = ggplot(data=total_ensemble_size, aes(y=ensemble_size, x=init_year)) +
-  ##   geom_point() +
-  ##   xlab("Year") +
-  ##   ylab("Ensemble size")
-  ## print(p)
-
-  ## ggsave(
-  ##   file.path(plot_outdir, "ensemble_size.png"),
-  ##   p,
-  ##   width = 5, height = 5, units = "in"
-  ## )
   ensemble_fcst_raw_complete
 }
 
-download_nrfa_data = function(stn_id, metadata) {
+summarise_discharge_data <- function(x, metadata) {
+
+  ## ## Previous POT analysis
+  ## ## Neri et al [https://doi.org/10.1002/joc.5915]:
+  ## ## "To avoid double counting the same event, we only consider
+  ## ## one event in a window of +/- 5 days + logarithm of the
+  ## ## drainage area"
+  ## catchment_area = metadata[["catchment_area"]]
+  ## window_size = ((5 + log(catchment_area * 0.386102)) * 2) %>% round()
+  ## ## Solari et al [https://doi.org/10.1002/2016WR019426]:
+  ## ## "As the moving window travels through the series, each
+  ## ## time that the data maximum in the window is located at
+  ## ## its center, the maximum is regarded as a peak"
+  ## df =
+  ##   df %>% # Neri et al
+  ##   mutate(pot = roll_max(gdf, n=window_size, align="center", fill=NA)) %>%
+  ##   mutate(is_peak = Vectorize(isTRUE)(pot == gdf)) %>%
+  ##   mutate(peak = ifelse(is_peak, pot, NA))
+  ## ## Unsure whether we need to make this unique or not?
+  ## peaks = df$pot[df$is_peak] ##%>% unique()
+  ## n_years = length(df$year %>% unique())
+  ## peaks_sorted = sort(peaks, decreasing = TRUE)
+  ## threshold_1 = peaks_sorted[n_years]
+  ## threshold_2 = peaks_sorted[n_years * 2]
+  ## threshold_3 = peaks_sorted[n_years * 3]
+  ## threshold_4 = peaks_sorted[n_years * 4]
+
+  ## df =
+  ##   df %>%
+  ##   mutate(pot_1 = ifelse(Vectorize(isTRUE)(peak >= threshold_1), 1, 0)) %>%
+  ##   mutate(pot_2 = ifelse(Vectorize(isTRUE)(peak >= threshold_2), 1, 0)) %>%
+  ##   mutate(pot_3 = ifelse(Vectorize(isTRUE)(peak >= threshold_3), 1, 0)) %>%
+  ##   mutate(pot_4 = ifelse(Vectorize(isTRUE)(peak >= threshold_4), 1, 0))
+
+  ## Add climate season label to rows
+  x <- x %>%
+    mutate(
+      clim_season = case_when(
+        month %in% c(12, 1, 2, 3) ~ "DJFM",
+        month %in% c(4, 5) ~ "AM",
+        month %in% c(6, 7, 8, 9) ~ "JJAS",
+        month %in% c(10, 11) ~ "ON"
+      )
+    ) %>%
+    mutate(season_year = ifelse(month %in% c(1, 2, 3), year - 1, year))
+
+  ## Quantiles per season
+  thresholds <- x %>%
+    group_by(ID, clim_season) %>%
+    summarize(
+      Q_99_threshold = quantile(Q, 0.99, na.rm = TRUE),
+      Q_95_threshold = quantile(Q, 0.95, na.rm = TRUE)
+    )
+
+  x <- x %>% left_join(thresholds, by=c("ID", "clim_season"))
+
+  ## Summarize to get flood counts
+  x <- x %>%
+    group_by(ID, clim_season, season_year) %>%
+    summarize(
+      missing_pct = (sum(is.na(Q)) / n()) * 100,
+      Q_max = max(Q, na.rm = TRUE),
+      Q_mean = mean(Q, na.rm = TRUE),
+      Q_05 = quantile(Q, probs = 0.05, na.rm = TRUE, names = FALSE),
+      Q_50 = quantile(Q, probs = 0.50, na.rm = TRUE, names = FALSE),
+      Q_90 = quantile(Q, probs = 0.90, na.rm = TRUE, names = FALSE),
+      Q_95 = quantile(Q, probs = 0.95, na.rm = TRUE, names = FALSE),
+      ## P_sum = sum(cdr, na.rm = TRUE),
+      ## POT_1 = sum(pot_1, na.rm = TRUE),
+      ## POT_2 = sum(pot_2, na.rm = TRUE),
+      ## POT_3 = sum(pot_3, na.rm = TRUE),
+      ## POT_4 = sum(pot_4, na.rm = TRUE),
+      POT_1 = sum(Q > Q_99_threshold, na.rm = TRUE),
+      POT_2 = sum(Q > Q_95_threshold, na.rm = TRUE)
+    ) %>%
+    ungroup() %>%
+    mutate(across(Q_max:POT_2, ~ifelse(is.finite(.), ., NA)))
+    ## mutate(across(Q_max:POT_4, ~ifelse(is.finite(.), ., NA)))
+  x
+}
+
+download_nrfa_data <- function(stn_id, metadata) {
   ## TODO tidy up this function, giving user more control over which variables are derived
   meta = metadata %>% filter(id %in% stn_id)
   ## Gauged daily flow [m3 s-1]
   gdf = get_ts(stn_id, "gdf") %>% as_tibble(rownames="time")
-  ## Catchent daily rainfall [mm]
-  cdr = try(get_ts(stn_id, "cdr") %>% as_tibble(rownames="time"))
-  if (inherits(cdr, "try-error"))
-    cdr <- gdf %>% rename(cdr = gdf) %>% mutate(cdr = NA)
+  ## ## Catchent daily rainfall [mm]
+  ## cdr = try(get_ts(stn_id, "cdr") %>% as_tibble(rownames="time"))
+  ## if (inherits(cdr, "try-error"))
+  ##   cdr <- gdf %>% rename(cdr = gdf) %>% mutate(cdr = NA)
 
   ## Create complete time series, in case the
   ## raw time series has missing values.
@@ -370,88 +557,21 @@ download_nrfa_data = function(stn_id, metadata) {
     tibble(time = complete_ts) %>%
     left_join(gdf, by="time")
   availability = sum(!is.na(gdf$gdf)) / nrow(gdf) * 100
-  df =
-    gdf %>%
-    left_join(cdr, by="time") %>%
+  x <- gdf %>%
+    rename(Q = gdf) %>%
+    ## left_join(cdr, by="time") %>%
     mutate(ID=stn_id, .after=time) %>%
     mutate(time = as.Date(time))
   ## TODO Filter out years with fewer than 330 days of records
-  df =
-    df %>%
+  x <- x %>%
     mutate(year = format(time, "%Y") %>% as.integer) %>%
     mutate(month = format(time, "%m") %>% as.integer)
-  ## Neri et al [https://doi.org/10.1002/joc.5915]:
-  ## "To avoid double counting the same event, we only consider
-  ## one event in a window of +/- 5 days + logarithm of the
-  ## drainage area"
-  catchment_area = meta[["catchment_area"]]
-  window_size = ((5 + log(catchment_area * 0.386102)) * 2) %>% round()
-  ## Solari et al [https://doi.org/10.1002/2016WR019426]:
-  ## "As the moving window travels through the series, each
-  ## time that the data maximum in the window is located at
-  ## its center, the maximum is regarded as a peak"
-  df =
-    df %>% # Neri et al
-    mutate(pot = roll_max(gdf, n=window_size, align="center", fill=NA)) %>%
-    mutate(is_peak = Vectorize(isTRUE)(pot == gdf)) %>%
-    mutate(peak = ifelse(is_peak, pot, NA))
-  ## Unsure whether we need to make this unique or not?
-  peaks = df$pot[df$is_peak] ##%>% unique()
-  n_years = length(df$year %>% unique())
-  peaks_sorted = sort(peaks, decreasing = TRUE)
-  threshold_1 = peaks_sorted[n_years]
-  threshold_2 = peaks_sorted[n_years * 2]
-  threshold_3 = peaks_sorted[n_years * 3]
-  threshold_4 = peaks_sorted[n_years * 4]
 
-  df =
-    df %>%
-    mutate(pot_1 = ifelse(Vectorize(isTRUE)(peak >= threshold_1), 1, 0)) %>%
-    mutate(pot_2 = ifelse(Vectorize(isTRUE)(peak >= threshold_2), 1, 0)) %>%
-    mutate(pot_3 = ifelse(Vectorize(isTRUE)(peak >= threshold_3), 1, 0)) %>%
-    mutate(pot_4 = ifelse(Vectorize(isTRUE)(peak >= threshold_4), 1, 0))
-
-  ## Add climate season label to rows
-  df =
-    df %>%
-    mutate(
-      clim_season = case_when(
-        month %in% c(12, 1, 2, 3) ~ "DJFM",
-        month %in% c(4, 5) ~ "AM",
-        month %in% c(6, 7, 8, 9) ~ "JJAS",
-        month %in% c(10, 11) ~ "ON"
-      )
-    ) %>%
-    mutate(season_year = ifelse(month %in% c(1, 2, 3), year - 1, year))
-
-  ## Summarize to get flood counts
-  df =
-    df %>%
-    group_by(ID, clim_season, season_year) %>%
-    summarize(
-      missing_pct = (sum(is.na(gdf)) / n()) * 100,
-      Q_max = max(gdf, na.rm = TRUE),
-      Q_mean = mean(gdf, na.rm = TRUE),
-      Q_05 = quantile(gdf, probs = 0.05, na.rm = TRUE, names = FALSE),
-      Q_50 = quantile(gdf, probs = 0.50, na.rm = TRUE, names = FALSE),
-      Q_90 = quantile(gdf, probs = 0.90, na.rm = TRUE, names = FALSE),
-      Q_95 = quantile(gdf, probs = 0.95, na.rm = TRUE, names = FALSE),
-      P_sum = sum(cdr, na.rm = TRUE),
-      POT_1 = sum(pot_1, na.rm = TRUE),
-      POT_2 = sum(pot_2, na.rm = TRUE),
-      POT_3 = sum(pot_3, na.rm = TRUE),
-      POT_4 = sum(pot_4, na.rm = TRUE),
-    ) %>%
-    ungroup() %>%
-    mutate(across(Q_max:POT_4, ~ifelse(is.finite(.), ., NA)))
+  x <- summarise_discharge_data(x, meta)
+  x
 }
-## Set some default formatting options for ggplot
-plot_format_objects = list(
-  scale_x_continuous(breaks=seq(1960, 2010, 10), limits=c(1960, 2005)),
-  labs(x="Start of 8-year period", y="NAO anomaly (hPa)")
-)
 
-rolling_fun = function(yrs, data, cols, funs, start=2, end=9) {
+rolling_fun <- function(yrs, data, cols, funs, start=2, end=9) {
   ## Compute rolling n-year means.
   ##
   ## Args:
@@ -468,7 +588,6 @@ rolling_fun = function(yrs, data, cols, funs, start=2, end=9) {
   ##   Data frame
   if (is.list(funs) & (!isTRUE(all(cols == names(funs)))))
     stop()
-
   ## Preallocate output
   out = lapply(cols, FUN=function(x) rep(NA, length(yrs)))
   names(out) = cols
@@ -477,7 +596,6 @@ rolling_fun = function(yrs, data, cols, funs, start=2, end=9) {
   ## Also collect the start year of the time window
   period_start = rep(NA, length(yrs))
   for (i in 1:(length(yrs)-end+1)) {
-  ## for (i in 1:(length(yrs)-end)) {
     start_index = i + start - 1
     end_index = i + end - 1
     for (j in 1:length(cols)) {
@@ -488,16 +606,14 @@ rolling_fun = function(yrs, data, cols, funs, start=2, end=9) {
       } else {
         fun = funs[[nm]]
       }
-      ## fun = ifelse(is.function(funs), funs, funs[[nm]])
       out[[nm]][i] = fun(x[start_index:end_index], na.rm=TRUE)
     }
-    ## period_start[i] = yrs[start_index]
   }
   out = out %>% as.data.frame() %>% as_tibble()
   out
 }
 
-corr_cross_validate = function(fcst, obs, leave_out_add=0) {
+corr_cross_validate <- function(fcst, obs, leave_out_add=0) {
   ## Compute cross validated anomaly correlation.
   ##
   ## Args:
@@ -520,17 +636,44 @@ corr_cross_validate = function(fcst, obs, leave_out_add=0) {
       leave_out_index = c()
     }
     keep_index = !(index %in% leave_out_index)
-    corr_this = cor.test(
+    corr_this = try(cor.test(
       fcst[keep_index],
       obs[keep_index],
       method="pearson", alternative="greater"
-    )
-    corr[i] = unname(corr_this$estimate)
+    ), silent=TRUE)
+    if (isTRUE(inherits(corr_this, "try-error"))) {
+      corr[i] = NA
+    } else {
+      corr[i] = unname(corr_this$estimate)
+    }
   }
   corr
 }
 
-calculate_error = function(fcst, ensemble_fcst, n_years, n_forecast, match_var) {
+sd_cross_validate <- function(x, leave_out_add=1) {
+  ntimes = length(x)
+  index = seq(1, ntimes) # for selection
+  sdev = rep(0., ntimes)
+  for (i in 1:ntimes) {
+    if (leave_out_add > 0) {
+      leave_out_start = max(c(1, i - leave_out_add))
+      leave_out_end = min(c(ntimes, i + leave_out_add))
+      leave_out_index = seq(leave_out_start, leave_out_end)
+    } else {
+      leave_out_index = c()
+    }
+    keep_index = !(index %in% leave_out_index)
+    sd_this = try(sd(x[keep_index], na.rm=TRUE), silent=TRUE)
+    if (isTRUE(inherits(sd_this, "try-error"))) {
+      sdev[i] = NA
+    } else {
+      sdev[i] = sd_this
+    }
+  }
+  sdev
+}
+
+calculate_error <- function(fcst, ensemble_fcst, n_years, n_forecast, match_var) {
   ## Match ensemble members.
   ##
   ## Select n members by comparing with variance-adjusted
@@ -572,7 +715,6 @@ calculate_error = function(fcst, ensemble_fcst, n_years, n_forecast, match_var) 
       + (rep(1:(n_years - n_forecast + 1), each = n_forecast) - 1)
     ) %>%
     as_tibble()
-  ## init_year_lag
 
   ## Now we create a temporary grouping variable to compute the
   ## year to which the lagged values contribute (e.g. the lagged
@@ -587,16 +729,12 @@ calculate_error = function(fcst, ensemble_fcst, n_years, n_forecast, match_var) 
     ungroup() %>%
     dplyr::select(-tmp_group)
 
-  ## ## Have a look at a few examples:
-  ## init_year_lag %>% filter(init_year_lag %in% 1965)
-  ## init_year_lag %>% filter(init_year_lag %in% 1983)
-  ## init_year_lag %>% filter(init_year_lag %in% 2005)
-
   ## Join the data frame with ensemble_fcst, which approximately
   ## quadruples its size (values are duplicated when they are
   ## included in a different lag year (i.e. `init_year_lag`))
   ensemble_fcst_lag =
     ensemble_fcst %>%
+    filter(variable %in% match_var) %>%
     left_join(init_year_lag, by = "init_year") %>%
     arrange(source_id, member, init_year_lag, init_year)
 
@@ -608,134 +746,59 @@ calculate_error = function(fcst, ensemble_fcst, n_years, n_forecast, match_var) 
   ## Calculate mean absolute error for the matching variable
   ensemble_fcst_lag =
     ensemble_fcst_lag %>%
-    filter(variable %in% match_var) %>%
+    ## filter(variable %in% match_var) %>%
     mutate(error = abs(std - ens_mean_lag_std))
 
-  ## OLD:
-
-  ## ## For each lagged year, select the n best performing members:
-  ## nao_matched_ensemble_fcst =
-  ##   ensemble_fcst_lag %>%
-  ##   group_by(source_id, member, init_year_lag) %>%
-  ##   mutate(min_error_year = init_year[which.min(error)]) %>%
-  ##   filter(init_year %in% min_error_year) %>%
-  ##   ## summarise(error = min(error, na.rm=TRUE)) #%>%
-  ##   ungroup() %>%
-  ##   group_by(init_year_lag) ## %>%
-  ## ## slice_min(error, n=n_select)
-
-  ## if (best) {
-  ##   nao_matched_ensemble_fcst =
-  ##     nao_matched_ensemble_fcst %>%
-  ##     slice_min(error, n=n_select)
-  ## } else {
-  ##   nao_matched_ensemble_fcst =
-  ##     nao_matched_ensemble_fcst %>%
-  ##     slice_max(error, n=n_select)
-  ## }
-
-  ## ## Tidy up
-  ## nao_matched_ensemble_fcst =
-  ##   nao_matched_ensemble_fcst %>%
-  ##   dplyr::select(project, source_id, mip, member, init_year, init_year_lag)
-
-  ## ## Join with original ensemble data
-  ## nao_matched_ensemble_fcst =
-  ##   nao_matched_ensemble_fcst %>%
-  ##   left_join(ensemble_fcst) %>%
-  ##   rename(init_year_matched = init_year) %>%
-  ##   rename(init_year = init_year_lag)
-
-  ## ## OLD 2:
-
-  ## ## For each lagged year, select the n best performing members:
-  ## nao_matched_ensemble_fcst =
-  ##   ensemble_fcst_lag %>%
-  ##   group_by(source_id, member, init_year_lag) %>%
-  ##   mutate(min_error_year = init_year[which.min(error)]) %>%
-  ##   filter(init_year %in% min_error_year) %>%
-  ##   ## summarise(error = min(error, na.rm=TRUE)) #%>%
-  ##   ungroup() ## %>%
-  ##   ## group_by(init_year_lag) ## %>%
-  ## ## slice_min(error, n=n_select)
-
-  ## nao_matched_ensemble_fcst =
-  ##   nao_matched_ensemble_fcst %>%
-  ##   dplyr::select(project, source_id, mip, member, init_year, init_year_lag, error)
-
-  ## ## Join with original ensemble data
-  ## nao_matched_ensemble_fcst =
-  ##   nao_matched_ensemble_fcst %>%
-  ##   ## left_join(ensemble_fcst) %>% # join on init_year
-  ##   rename(init_year_matched = init_year) %>%
-  ##   rename(init_year = init_year_lag)
-
-  ## ## Return matched forecast
-  ## nao_matched_ensemble_fcst
-
-  ## NEW:
-
-  ## For each lagged year, select the n best performing members:
-  nao_matched_ensemble_fcst =
-    ensemble_fcst_lag %>%
-    ## group_by(source_id, member, init_year_lag) %>%
-    ## mutate(min_error_year = init_year[which.min(error)]) %>%
-    ## filter(init_year %in% min_error_year) %>%
-    ## ## summarise(error = min(error, na.rm=TRUE)) #%>%
-    ungroup() ## %>%
-    ## group_by(init_year_lag) ## %>%
-  ## slice_min(error, n=n_select)
-
+  ## Prepare output data
+  nao_matched_ensemble_fcst = ensemble_fcst_lag %>% ungroup()
   nao_matched_ensemble_fcst =
     nao_matched_ensemble_fcst %>%
-    dplyr::select(project, source_id, mip, member, init_year, init_year_lag, error)
-
-  ## Join with original ensemble data
-  nao_matched_ensemble_fcst =
-    nao_matched_ensemble_fcst %>%
-    ## left_join(ensemble_fcst) %>% # join on init_year
+    dplyr::select(project, source_id, mip, member, init_year, init_year_lag, error) %>%
     rename(init_year_matched = init_year) %>%
     rename(init_year = init_year_lag)
-
-  ## Return matched forecast
-  nao_matched_ensemble_fcst
+  return(nao_matched_ensemble_fcst)
 }
 
-## create_annual_ensemble_forecast = function(ensemble_fcst_error,
-##                                            ensemble_fcst_raw,
-##                                            vars = climate_vars,
-##                                            model_select = NA,
-##                                            project_select = NA,
-##                                            full = TRUE,
-##                                            best_n = FALSE,
-##                                            worst_n = FALSE,
-##                                            n_select = 20,
-##                                            lead_times = 2,
-##                                            lag = TRUE) {
+parse_grid_cell <- function(x) {
+  grid_lat = str_extract(x, "(N|S)\\d+\\.*\\d*")
+  grid_lon = str_extract(x, "(E|W)\\d+\\.*\\d*")
+  north = toupper(str_sub(grid_lat, 1, 1)) == "N"
+  east = toupper(str_sub(grid_lon, 1, 1)) == "E"
+  grid_lat = str_sub(grid_lat, 2, -1) %>% as.numeric()
+  grid_lon = str_sub(grid_lon, 2, -1) %>% as.numeric()
+  grid_lat = ifelse(north, grid_lat, grid_lat * -1)
+  grid_lon = ifelse(east, grid_lon, grid_lon * -1)
+  lapply(seq_len(length(x)), FUN=function(i) c(grid_lon[i], grid_lat[i]))
+}
 
-##   stop("Not yet implemented")
-##   if (length(lead_times) == 1) {
-##     if (lag) {
-##       lead_times = seq(lead_times, lead_times + 3)
-##       ensemble_fcst_raw = ensemble_fcst_raw %>% filter(lead_time %in% lead_times)
-##       ensemble_fcst_raw = ensemble_fcst_raw %>% group_by(season_year)
-##     }
-##   }
-## }
+select_nearest_grid_cell <- function(lat, lon, grid_coords) {
+  ## grid_coords <- c(
+  ##   "uk_precip_field_N50.0_W0.0",
+  ##   "uk_precip_field_N50.0_W10.0",
+  ##   "uk_precip_field_N50.0_W5.0",
+  ##   "uk_precip_field_N55.0_W0.0",
+  ##   "uk_precip_field_N55.0_W10.0",
+  ##   "uk_precip_field_N55.0_W5.0",
+  ##   "uk_precip_field_N60.0_W0.0",
+  ##   "uk_precip_field_N60.0_W10.0",
+  ##   "uk_precip_field_N60.0_W5.0")
+  ## lat = 52.6
+  ## lon = -2.6
+  coords <- parse_grid_cell(grid_coords)
+  dists <- sapply(coords, FUN=function(x) geosphere::distHaversine(c(lon, lat), x))
+  i <- which.min(dists)
+  grid_coords[i]
+}
 
-## create_multiyear_ensemble_forecast = function() {}
-create_ensemble_forecast = function(ensemble_fcst_error,
-                                    ensemble_fcst,
-                                    vars = climate_vars,
-                                    model_select = NA,
-                                    project_select = NA,
-                                    full = TRUE,
-                                    best_n = FALSE,
-                                    worst_n = FALSE,
-                                    n_select = 20) {
-                                    ## lead_times = c(2:9),
-                                    ## lag = TRUE,
-                                    ## n_lag = 4) {
+create_ensemble_forecast <- function(ensemble_fcst_error,
+                                     ensemble_fcst,
+                                     vars,
+                                     model_select = NA,
+                                     project_select = NA,
+                                     full = TRUE,
+                                     best_n = FALSE,
+                                     worst_n = FALSE,
+                                     n_select = 20) {
 
   ## Filter by models
   models = ensemble_fcst$source_id %>% unique() %>% toupper()
@@ -794,9 +857,616 @@ create_ensemble_forecast = function(ensemble_fcst_error,
   ensemble_fcst =
     ensemble_fcst %>%
     group_by_at(ensemble_group_vars) %>%
-    summarize(across(all_of(vars), mean, na.rm = TRUE))
+    summarize(across(starts_with(vars), mean, na.rm = TRUE))
+    ## summarize(across(all_of(vars), mean, na.rm = TRUE))
   ensemble_fcst
 }
+
+
+make_prediction <- function(newdata,
+                            data,
+                            ...,
+                            quantiles = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.98, 0.99),
+                            model_family,
+                            obs,
+                            compute_skill = FALSE,
+                            ref_prediction = NA) {
+  ## Create centiles for a list of models
+  ##
+  ## Args:
+  ##   data:         data.frame. Data to use for model prediction
+  ##   ...:          model objects
+  ##   quantiles:    numeric. quantiles to compute.
+  ##   model_family: character. Currently only GA and PO are supported.
+  ##
+  ## Returns:
+  ##   Tibble.
+  if (!model_family %in% c("GA", "PO")) {
+    msg <- paste0("Model family ", model_family, " currently not supported")
+    stop(msg)
+  }
+
+  ## Extract model names from dots
+  dots = match.call(expand.dots=FALSE)$...
+  model_nms = names(dots)
+  models = list(...)
+  names(models) = model_nms
+  id_cols = c("ID", "clim_season", "year", "lead_time")
+  quantile_names = paste0("Q", formatC(quantiles * 100, width=2, flag=0))
+  computed_quantiles = list()
+  for (i in 1:length(model_nms)) {
+    nm = model_nms[i]
+    model = models[[nm]]
+    tbl <- matrix(NA, nrow=nrow(newdata), ncol=length(quantile_names) + 3) %>%
+      as_tibble() %>%
+      setNames(c("date", "model", "observations", quantile_names))
+    ## tbl =
+    ##   rep(NA, length(quantile_names) + 1) %>%
+    ##   setNames(c("model", quantile_names)) %>%
+    ##   as.list() %>% as_tibble()
+    tbl[["date"]] = NA
+    tbl[["model"]] = nm
+    tbl[["observations"]] = obs
+    if (!is.na(model)) {
+      mu = predict(
+        model,
+        newdata = newdata,
+        what = "mu",
+        type = "response",
+        data = data
+      )
+      if (model_family == "GA") {
+        sigma = predict(
+          model,
+          newdata = newdata,
+          what = "sigma",
+          type = "response",
+          data = data
+        )
+        shape = 1 / (sigma ** 2)
+        scale = mu / shape
+
+      } else {
+        sigma = NA
+        shape = NA
+        scale = NA
+      }
+      tbl[["mu"]] = mu
+      tbl[["sigma"]] = sigma
+      tbl[["shape"]] = shape
+      tbl[["scale"]] = scale
+
+      if (compute_skill) {
+        if (is.na(ref_prediction)) {
+          stop("`ref_prediction` cannot be be NA if `compute_skill` is TRUE")
+        }
+        ## See http://www.gamlss.com/wp-content/uploads/2013/01/gamlss-manual.pdf [A.5.1]
+        ## We need scale/shape to implement scoringRules, but the GAMLSS implementation
+        ## of the Gamma distn is a reparameterization which sets sigma**2=1/shape and
+        ## mu=shape*scale [TODO - check this with Louise]
+        ## Compute CRPS & CRPSS
+        if (model_family == "GA") {
+          tbl[["crps_fcst"]] <- crps_gamma(obs, shape=shape, scale=scale)
+          ## Also try computing CRPS with ensemble approach
+          ens_fcst <- qGA(seq(0.01, 0.99, by = 0.01), mu, sigma)
+
+        } else {
+          tbl[["crps_fcst"]] <- NA
+          ens_fcst <- qPO(seq(0.01, 0.99, by = 0.01), mu)
+        }
+        ## tbl[["crps_fcst"]] = crps_gamma(obs, shape=shape, scale=scale)
+        ## ## Also try computing CRPS with ensemble approach
+        ## ens_fcst = qGA(seq(0.01, 0.99, by = 0.01), mu, sigma)
+        ens_fcst_mat = t(matrix(ens_fcst))
+        if (nrow(ens_fcst_mat) != length(obs)) {
+          stop()
+        }
+        tbl[["crps_ens_fcst"]] = EnsCrps(ens_fcst_mat, obs)
+        ## Ensemble climatology forecast
+        ref_prediction_mat = t(matrix(ref_prediction))
+        if (nrow(ref_prediction_mat) != length(obs)) {
+          stop()
+        }
+        tbl[["crps_climat"]] = EnsCrps(ref_prediction_mat, obs)
+        tbl[["aic"]] = AIC(models[[nm]])
+      }
+      ## Predict quantiles using mu and sigma
+      for (j in 1:length(quantile_names)) {
+        q = quantiles[j]
+        qnm = quantile_names[j]
+        if (model_family == "GA") {
+          tbl[[qnm]] = qGA(q, mu, sigma)
+        } else {
+          tbl[[qnm]] = qPO(q, mu)
+        }
+      }
+
+    } else {
+      tbl[["mu"]] = NA
+      tbl[["sigma"]] = NA
+      tbl[["shape"]] = NA
+      tbl[["scale"]] = NA
+      if (compute_skill) {
+        tbl[["crps_fcst"]] = NA
+        tbl[["crps_ens_fcst"]] = NA
+        tbl[["crps_climat"]] = NA
+        tbl[["aic"]] = NA
+      }
+      for (qnm in quantile_names) {
+        tbl[[qnm]] = NA
+      }
+    }
+    ## Merge with ID columns from new data
+    tbl = cbind(
+      newdata %>% dplyr::select(any_of(id_cols)),
+      tbl
+    )
+    computed_quantiles[[i]] = tbl
+  }
+  ## Combine predictions from all models
+  computed_quantiles =
+    do.call("rbind", computed_quantiles) %>%
+    as_tibble()
+  return(computed_quantiles)
+}
+
+fit_models_cv <- function(x,
+                          config_section,
+                          lead_time,
+                          ...) {
+
+  catchment_prediction_list = list()
+  catchment_simulation_list = list()
+
+  n_fold <- nrow(x)
+  for (p in 1:n_fold) {
+    ## The buffer is needed to prevent contamination between the training set and test set
+    buffer <- length(lead_time) - 1
+    idx = seq_len(n_fold)
+    test_idx <- p
+    remove_idx <- seq(p - buffer, p + buffer)
+    remove_idx <- remove_idx[remove_idx > 0]
+    train_idx = idx[!idx %in% remove_idx]
+    train_data = x[train_idx,]
+    test_data = x[test_idx,]
+    year <- test_data$year # Should be length 1
+
+    ## N.B. because we use a function to fit models the data.frame
+    ## used in the original fit is not stored in the model call
+    ## correctly. This means that when we call `predict.gamlss`
+    ## we have to supply the data.frame used for the original
+    ## fit (i.e. train_data)
+    models = fit_models(
+      config_section$formulas,
+      config_section$sigma_formulas,
+      config_section$model_family,
+      train_data
+    )
+
+    ## ############### ##
+    ## Make prediction ##
+    ## ############### ##
+
+    ## Assume climatology is the mean value of Q
+    ens_climatology_prediction <- train_data[["Q"]]
+    climatology_prediction <- ens_climatology_prediction %>% mean(na.rm = TRUE)
+    obs = test_data[["Q"]]
+    prediction = do.call(
+      "make_prediction",
+      c(list(newdata = test_data, data = train_data),
+        models,
+        list(model_family = config_section$model_family,
+             obs = obs,
+             compute_skill = TRUE,
+             ref_prediction = ens_climatology_prediction))
+    )
+
+    ## Create output data frame
+    ## N.B. Q50 is the median of the probabilistic forecast, not the streamflow quantile
+    obs_column_name = paste0(config_section$predictand, '_obs')
+    exp_column_name = paste0(config_section$predictand, '_exp')
+    climat_column_name = paste0(config_section$predictand, '_climat')
+    prediction =
+      prediction %>%
+      mutate(
+        !!obs_column_name := observations,
+        !!exp_column_name := Q50,
+        !!climat_column_name := climatology_prediction
+      ) #%>%
+      #mutate(date = NA, year = year)
+
+    ## Add data to list
+    pred_idx = length(catchment_prediction_list) + 1
+    catchment_prediction_list[[pred_idx]] = prediction
+
+    ## ## ############### ##
+    ## ## Make simulation ##
+    ## ## ############### ##
+
+    ## obs = train_data[["Q"]]
+    ## simulation = do.call(
+    ##   "make_prediction",
+    ##   c(list(newdata = train_data, data = train_data),
+    ##     models,
+    ##     list(model_family = config_section$model_family))
+
+    ## obs_column_name = paste0(config_section$predictand, '_obs')
+    ## exp_column_name = paste0(config_section$predictand, '_exp')
+    ## climat_column_name = paste0(config_section$predictand, '_climat')
+    ## simulation =
+    ##   simulation %>%
+    ##   mutate(
+    ##     !!obs_column_name := obs,
+    ##     !!exp_column_name := Q50,
+    ##     !!climat_column_name := climatology_prediction
+    ##   ) %>%
+    ##   mutate(date = NA, year = year) %>%
+    ## mutate(test_year = test_year)
+
+    ## sim_idx = length(simulation_prediction_list) + 1
+    ## catchment_simulation_list[[sim_idx]] = simulation
+
+  }
+  if (length(catchment_prediction_list) == 0) {
+    catchment_prediction <- NULL
+  } else {
+    catchment_prediction = do.call("rbind", catchment_prediction_list)
+  }
+  catchment_prediction
+}
+
+fit_models_forward_chain <- function(x,
+                                     config_section,
+                                     training_period_start,
+                                     training_period_end,
+                                     test_period_end,
+                                     lead_time,
+                                     ...) {
+  catchment_prediction_list = list()
+  catchment_simulation_list = list()
+
+  buffer <- length(lead_time)
+  max_training_period_end = test_period_end - buffer #window
+  while (training_period_end <= max_training_period_end) {
+    training_years <- seq(training_period_start, training_period_end)
+    test_year <- max(training_years) + buffer
+    train_data <- x %>% filter(year %in% training_years)
+    test_data <- x %>% filter(year %in% test_year)
+
+    ## Only continue if there is sufficient training/testing data
+    ## if (nrow(train_data) == 0 | nrow(test_data) == 0) {
+    if (nrow(train_data) < 10 | nrow(test_data) == 0) {
+      training_period_end <- training_period_end + 1
+      next
+    }
+
+    ## START SECTION - common with fit_models_cv
+    ## N.B. because we use a function to fit models the data.frame
+    ## used in the original fit is not stored in the model call
+    ## correctly. This means that when we call `predict.gamlss`
+    ## we have to supply the data.frame used for the original
+    ## fit (i.e. train_data)
+    models = fit_models(
+      config_section$formulas,
+      config_section$sigma_formulas,
+      config_section$model_family,
+      train_data
+    )
+    ## ## Assume climatology is the mean value of Q
+    ## ens_climatology_prediction <- train_data[["Q"]]
+    ## climatology_prediction <- ens_climatology_prediction %>% mean(na.rm = TRUE)
+    ## obs = test_data[["Q"]]
+    ## prediction = do.call(
+    ##   "make_prediction",
+    ##   c(list(newdata = test_data, data = train_data),
+    ##     models,
+    ##     list(model_family = config_section$model_family,
+    ##          obs = obs,
+    ##          ref_prediction = ens_climatology_prediction))
+    ## )
+    ## ## Create output data frame
+    ## obs_column_name = paste0(config_section$predictand, '_obs')
+    ## exp_column_name = paste0(config_section$predictand, '_exp')
+    ## climat_column_name = paste0(config_section$predictand, '_climat')
+    ## ## N.B. Q50 is the median of the probabilistic forecast, not the streamflow quantile
+    ## prediction =
+    ##   prediction %>%
+    ##   mutate(
+    ##     !!obs_column_name := obs,
+    ##     !!exp_column_name := Q50,
+    ##     !!climat_column_name := climatology_prediction
+    ##   ) %>%
+    ##   mutate(
+    ##     date = NA,
+    ##     year = year
+    ##     ## model = paste0("GAMLSS_", model)
+    ##   ) #%>%
+    ##   ## dplyr::select(all_of(c(obs_column_name, exp_column_name)), year, model)
+
+    ## pred_idx = length(catchment_prediction_list) + 1
+    ## catchment_prediction_list[[pred_idx]] = prediction
+
+    ## ############### ##
+    ## Make prediction ##
+    ## ############### ##
+
+    ## Assume climatology is the mean value of Q
+    ens_climatology_prediction <- train_data[["Q"]]
+    climatology_prediction <- ens_climatology_prediction %>% mean(na.rm = TRUE)
+    obs = test_data[["Q"]]
+    prediction = do.call(
+      "make_prediction",
+      c(list(newdata = test_data, data = train_data),
+        models,
+        list(model_family = config_section$model_family,
+             obs = obs,
+             compute_skill = TRUE,
+             ref_prediction = ens_climatology_prediction))
+    )
+
+    ## Create output data frame
+    ## N.B. Q50 is the median of the probabilistic forecast, not the streamflow quantile
+    obs_column_name = paste0(config_section$predictand, '_obs')
+    exp_column_name = paste0(config_section$predictand, '_exp')
+    climat_column_name = paste0(config_section$predictand, '_climat')
+    prediction =
+      prediction %>%
+      mutate(
+        !!obs_column_name := observations,
+        !!exp_column_name := Q50,
+        !!climat_column_name := climatology_prediction
+      ) #%>%
+      #mutate(date = NA, year = year)
+
+    ## Add data to list
+    pred_idx = length(catchment_prediction_list) + 1
+    catchment_prediction_list[[pred_idx]] = prediction
+
+    ## ############### ##
+    ## Make simulation ##
+    ## ############### ##
+
+    obs = train_data[["Q"]]
+    simulation = do.call(
+      "make_prediction",
+      c(list(newdata = train_data, data = train_data),
+        models,
+        list(model_family = config_section$model_family, obs = obs))
+    )
+
+    obs_column_name = paste0(config_section$predictand, '_obs')
+    exp_column_name = paste0(config_section$predictand, '_exp')
+    simulation =
+      simulation %>%
+      mutate(
+        !!obs_column_name := observations,
+        !!exp_column_name := Q50,
+      ) %>%
+      mutate(test_year = test_year)
+
+    sim_idx = length(catchment_simulation_list) + 1
+    catchment_simulation_list[[sim_idx]] = simulation
+
+    ## Update training period end for next iteration
+    training_period_end <- training_period_end + 1
+  }
+  if (length(catchment_prediction_list) == 0) {
+    catchment_prediction <- NULL
+    catchment_simulation <- NULL
+  } else {
+    catchment_prediction = do.call("rbind", catchment_prediction_list)
+    catchment_simulation = do.call("rbind", catchment_simulation_list)
+  }
+  list(prediction = catchment_prediction, simulation = catchment_simulation)
+}
+
+fit_models <- function(formulas,
+                       sigma_formulas,
+                       model_family,
+                       data,
+                       ...) {
+
+  model_names = names(formulas)
+  if (!isTRUE(all.equal(model_names, names(sigma_formulas)))) {
+    stop()
+  }
+  if (!model_family %in% c("GA", "PO")) {
+    stop(paste0("Model family '", model_family, "' not yet supported"))
+  }
+  fitted_models = list()
+  for (i in 1:length(model_names)) {
+    model_nm = model_names[i]
+    if (model_family == "GA") {
+      model <- try(
+        gamlss(
+          formula = formulas[[i]],
+          sigma.formula = sigma_formulas[[i]],
+          family = GA,
+          trace = FALSE,
+          data = data,
+          ...
+        ), silent=TRUE
+      )
+    } else {
+      model <- try(
+        gamlss(
+          formula = formulas[[i]],
+          family = PO,
+          trace = FALSE,
+          data = data,
+          ...
+        ), silent=TRUE
+      )
+    }
+    if (inherits(model, "try-error")) {
+      model = NA
+    }
+    fitted_models[[model_nm]] = model
+  }
+  fitted_models
+}
+
+get_aic <- function(model_list) {
+  aic = sapply(
+    model_list,
+    FUN=function(x) ifelse(is.null(x), NA, AIC(x))
+  ) %>% as_tibble_row()
+  aic
+}
+
+check_residuals <- function (x) {
+  if (!is.gamlss(x))
+    stop(paste("This is not an gamlss object", "\n", ""))
+  if (is.null(x$residuals)) #
+    stop(paste("There are no quantile residuals in the object"))
+  residx <- resid(x) # get the residuals
+  w <- x$weights
+  qq <- as.data.frame(qqnorm(residx, plot = FALSE))
+  Filliben <- cor(qq$y,qq$x)
+  m.1 <- mean(residx)
+  m.2 <- var(residx) # cov.wt(mr,w)$cov
+  n.obs <- sum(w)
+  m.3 <- sum((residx-m.1)**3)/n.obs
+  m.4 <- sum((residx-m.1)**4)/n.obs
+  b.1 <- m.3^2/m.2^3
+  sqrtb.1 <- sign(m.3)*sqrt(abs(b.1))
+  b.2 <- m.4/m.2^2
+  return(list(mean=m.1, variance=m.2, skewness=sqrtb.1, kurtosis=b.2, filliben=Filliben, nobs=n.obs))
+}
+
+get_residual_checks <- function(model_list) {
+  rows <- list()
+  for (i in 1:length(model_list)) {
+    nm <- names(model_list)[i]
+    rows[[i]] <- check_residuals(model_list[[i]]) %>% as_tibble_row() %>% mutate(model = nm)
+  }
+  return(do.call("rbind", rows))
+}
+
+myfun <- function(x) {
+  ## Select the best model based on AIC value
+  x_best =
+    x %>%
+    group_by(ID, subset, period) %>%
+    filter(crps_ens_fcst==min(crps_ens_fcst))
+    ## filter(aic == min(aic))
+    ## filter(!!sym(skill_measure) == max(!!sym(skill_measure)))
+  skill =
+    gauge_stns %>%
+    left_join(x_best) %>%
+    mutate(skill = !!sym(skill_measure))
+  skill
+}
+
+load_model_predictions <- function(config, experiment, aggregation_period) {
+  predictions = open_dataset(
+    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
+  ) %>%
+    collect() #%>%
+    ## filter(subset %in% c("full", "best_n")) #%>%
+    ## mutate(subset = ifelse(subset == "best_n", "NAO-matched ensemble", "Full ensemble"))
+  model_levels <- unique(predictions$model)
+  model_labels <- model_levels %>% gsub("_", "", .)
+  predictions <-
+    predictions %>%
+    mutate(model = factor(model, levels = model_levels, labels = model_labels))
+  predictions
+}
+
+load_model_simulations <- function(config, experiment, aggregation_period) {
+  simulations <- open_dataset(
+    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "simulation")
+  ) %>%
+    collect() %>%
+    filter(subset %in% c("full", "best_n")) #%>%
+    ## mutate(subset = ifelse(subset == "best_n", "NAO-matched ensemble", "Full ensemble"))
+  model_levels <- unique(simulations$model)
+  model_labels <- model_levels %>% gsub("_", "", .)
+  simulations <-
+    simulations %>%
+    mutate(model = factor(model, levels = model_levels, labels = model_labels))
+  simulations
+}
+
+load_model_fit <- function(config, experiment, aggregation_period) {
+  fit <- open_dataset(
+    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "fit")
+  ) %>% collect()
+  fit <- fit %>% mutate(period = aggregation_period)
+  model_levels <- unique(fit$model)
+  model_labels <- model_levels %>% gsub("_", "", .)
+  fit <- fit %>% mutate(model = factor(model, levels = model_levels, labels = model_labels))
+  fit
+}
+
+load_skill_scores <- function(config, experiment, aggregation_period) {
+  ds <- open_dataset(
+    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
+  ) %>% collect()
+  skill <- ds %>%
+    group_by(ID, model, subset) %>%
+    summarize(
+      crps_fcst = mean(crps_fcst),
+      crps_ens_fcst = mean(crps_ens_fcst),
+      crps_climat = mean(crps_climat),
+      aic=mean(aic)
+    ) %>%
+    ## mutate(crpss = 1 - (crps_fcst / crps_climat)) %>%
+    mutate(crpss = 1 - (crps_ens_fcst / crps_climat)) %>% # TODO check
+    mutate(period = aggregation_period)
+
+  model_levels <- unique(skill$model)
+  model_labels <- model_levels %>% gsub("_", "", .)
+  skill <- skill %>% mutate(model = factor(model, levels = model_levels, labels = model_labels))
+
+  return(skill)
+}
+
+
+## mean_square_error_skill_score <- function(obs, exp) {
+##   ## MSSS
+##   mse = mean((exp - obs) ^ 2)
+##   mse_ref = mean((mean(obs) - obs) ^ 2)
+##   msss = 1 - (mse / mse_ref)
+##   ## ACC
+##   acc = cor(obs, exp, method = "pearson")
+##   ## correlation
+##   r = cor(obs, exp, method = "pearson")
+##   ## potential skill [= coefficient of determination]
+##   ps = r ^ 2
+##   ## slope reliability
+##   srel = (r - (sd(exp) / sd(obs))) ^ 2
+##   ## standardized mean error
+##   sme = ((mean(exp) - mean(obs)) / sd(obs)) ^ 2
+##   ## msss = ps - srel - sme
+##   list(msss = msss, ps = ps, srel = srel, sme = sme, acc = acc)
+## }
+
+## NOT USED:
+##
+## create_annual_ensemble_forecast = function(ensemble_fcst_error,
+##                                            ensemble_fcst_raw,
+##                                            vars = climate_vars,
+##                                            model_select = NA,
+##                                            project_select = NA,
+##                                            full = TRUE,
+##                                            best_n = FALSE,
+##                                            worst_n = FALSE,
+##                                            n_select = 20,
+##                                            lead_times = 2,
+##                                            lag = TRUE) {
+
+##   stop("Not yet implemented")
+##   if (length(lead_times) == 1) {
+##     if (lag) {
+##       lead_times = seq(lead_times, lead_times + 3)
+##       ensemble_fcst_raw = ensemble_fcst_raw %>% filter(lead_time %in% lead_times)
+##       ensemble_fcst_raw = ensemble_fcst_raw %>% group_by(season_year)
+##     }
+##   }
+## }
+
+## create_multiyear_ensemble_forecast = function() {}
 
 ## create_ensemble_forecast_old = function(ensemble_fcst_error,
 ##                                     ensemble_fcst_raw,
@@ -936,955 +1606,3 @@ create_ensemble_forecast = function(ensemble_fcst_error,
 
 ##   ensemble_fcst_raw
 ## }
-
-compute_quantiles = function(newdata,
-                             data,
-                             ...,
-                             quantiles = c(0.5, 0.25, 0.75, 0.05, 0.95),
-                             model_family) {
-  ## Create centiles for a list of models
-  ##
-  ## Args:
-  ##   data:         data.frame. Data to use for model prediction
-  ##   ...:          model objects
-  ##   quantiles:    numeric. quantiles to compute.
-  ##   model_family: character. Currently only GA and PO are supported.
-  ##
-  ## Returns:
-  ##   Tibble.
-
-  ## Extract model names from dots
-  dots = match.call(expand.dots=FALSE)$...
-  model_nms = names(dots)
-  models = list(...)
-  names(models) = model_nms
-  id_cols = c("ID", "clim_season", "year", "lead_time")
-  quantile_names = paste0("Q", formatC(quantiles * 100, width=2, flag=0))
-  computed_quantiles = list()
-  for (i in 1:length(model_nms)) {
-    nm = model_nms[i]
-    model = models[[nm]]
-    tbl =
-      rep(NA, length(quantile_names) + 1) %>%
-      setNames(c("model", quantile_names)) %>%
-      as.list() %>% as_tibble()
-    tbl[["model"]] = nm
-    if (!is.null(model)) {
-      mu = predict(
-        models[[nm]],
-        newdata = newdata,
-        what = "mu",
-        type = "response",
-        data = data
-      )
-      if (model_family %in% c("GA")) { # TODO add more cases
-        sigma = predict(
-          models[[nm]],
-          newdata = newdata,
-          what = "sigma",
-          type = "response",
-          data = data
-        )
-      }
-      for (j in 1:length(quantile_names)) {
-        q = quantiles[j]
-        qnm = quantile_names[j]
-        if (model_family == "GA") {
-          tbl[[qnm]] = qGA(q, mu, sigma)
-        } else if (model_family == "PO") {
-          tbl[[qnm]] = qPO(q, mu)
-        }
-      }
-    }
-    tbl = cbind(
-      tbl,
-      newdata %>% dplyr::select(any_of(id_cols))
-    )
-    computed_quantiles[[i]] = tbl
-  }
-  computed_quantiles =
-    do.call("rbind", computed_quantiles) %>%
-    as_tibble()
-  computed_quantiles
-}
-
-fit_models = function(formulas,
-                      sigma_formulas,
-                      model_family,
-                      data,
-                      ...) {
-
-  model_names = names(formulas)
-  if (!isTRUE(all.equal(model_names, names(sigma_formulas)))) {
-    stop()
-  }
-  fitted_models = list()
-  for (i in 1:length(model_names)) {
-    model_nm = model_names[i]
-    model = try(
-      gamlss(
-        formula = formulas[[i]],
-        sigma.formula = sigma_formulas[[i]],
-        family = model_family,
-        trace = FALSE,
-        data = data,
-        ...
-      )
-    )
-    if (inherits(model, "try-error")) model = NULL
-    fitted_models[[model_nm]] = model
-  }
-  fitted_models
-}
-
-get_aic = function(model_list) {
-  aic = sapply(
-    models,
-    FUN=function(x) ifelse(is.null(x), NA, AIC(x))
-  ) %>% as_tibble_row()
-  aic
-}
-
-mean_square_error_skill_score = function(obs, exp) {
-  ## mse = mean((exp - obs) ^ 2)
-  ## mse_ref = mean((mean(obs) - obs) ^ 2)
-  ## msss = 1 - (mse / mse_ref)
-  ## correlation
-  r = cor(obs, exp, method = "pearson")
-  ## potential skill [= coefficient of determination]
-  ps = r ^ 2
-  ## slope reliability
-  srel = (r - (sd(exp) / sd(obs))) ^ 2
-  ## standardized mean error
-  sme = ((mean(exp) - mean(obs)) / sd(obs)) ^ 2
-  msss = ps - srel - sme
-  list(msss = msss, ps = ps, srel = srel, sme = sme)
-}
-
-## plot_discrete_cbar = function(breaks, # Vector of breaks. If +-Inf are used, triangles will be added to the sides of the color bar
-##                               palette = "Greys", # RColorBrewer palette to use
-##                               colors = RColorBrewer::brewer.pal(length(breaks) - 1, palette), # Alternatively, manually set colors
-##                               direction = 1, # Flip colors? Can be 1 or -1
-##                               spacing = "natural", # Spacing between labels. Can be "natural" or "constant"
-##                               border_color = NA, # NA = no border color
-##                               legend_title = NULL,
-##                               legend_direction = "horizontal", # Can be "horizontal" or "vertical"
-##                               font_size = 5,
-##                               expand_size = 1, # Controls spacing around legend plot
-##                               spacing_scaling = 1, # Multiplicative factor for label and legend title spacing
-##                               width = 0.1, # Thickness of color bar
-##                               triangle_size = 0.1 # Relative width of +-Inf triangles
-##                               ) {
-
-##   ## Inspired by this issue discussion:
-##   ## https://github.com/tidyverse/ggplot2/issues/2673
-##   ## Code more or less copied from this SO answer:
-##   ## https://stackoverflow.com/a/50540633
-
-##   require(ggplot2)
-##   if (!(spacing %in% c("natural", "constant"))) {
-##     stop("spacing must be either 'natural' or 'constant'")
-##   }
-
-##   if (!(direction %in% c(1, -1))) {
-##     stop("direction must be either 1 or -1")
-##   }
-
-##   if (!(legend_direction %in% c("horizontal", "vertical"))) {
-##     stop("legend_direction must be either 'horizontal' or 'vertical'")
-##   }
-
-##   breaks = as.numeric(breaks)
-##   new_breaks = sort(unique(breaks))
-##   if (any(new_breaks != breaks)) {
-##     warning("Wrong order or duplicated breaks")
-##   }
-##   breaks = new_breaks
-
-##   if (class(colors) == "function") {
-##     colors = colors(length(breaks) - 1)
-##   }
-
-##   if (length(colors) != length(breaks) - 1) {
-##     stop("Number of colors (", length(colors), ") must be equal to number of breaks (", length(breaks), ") minus 1")
-##   }
-
-##   if (!missing(colors)) {
-##     warning("Ignoring RColorBrewer palette '", palette, "', since colors were passed manually")
-##   }
-
-##   if (direction == -1) {
-##     colors = rev(colors)
-##   }
-
-##   inf_breaks = which(is.infinite(breaks))
-##   if (length(inf_breaks) != 0) {
-##     breaks = breaks[-inf_breaks]
-##   }
-##   plotcolors = colors
-##   n_breaks = length(breaks)
-##   labels = breaks
-
-##   if (spacing == "constant") {
-##     breaks = 1:n_breaks
-##   }
-
-##   r_breaks = range(breaks)
-##   cbar_df = data.frame(
-##     stringsAsFactors = FALSE,
-##     y = breaks,
-##     yend = c(breaks[-1], NA),
-##     color = as.character(1:n_breaks)
-##   )[-n_breaks,]
-##   xmin = 1 - width/2
-##   xmax = 1 + width/2
-
-##   cbar_plot = ggplot(
-##     cbar_df,
-##     aes(
-##       xmin=xmin, xmax = xmax, ymin = y, ymax = yend,
-##       fill = factor(color, levels = 1:length(colors))
-##     )
-##   ) +
-##     geom_rect(show.legend = FALSE, color=border_color)
-
-##   if (any(inf_breaks == 1)) { # Add < arrow for -Inf
-##     firstv = breaks[1]
-##     polystart = data.frame(
-##       x = c(xmin, xmax, 1),
-##       y = c(rep(firstv, 2), firstv - diff(r_breaks) * triangle_size)
-##     )
-##     plotcolors = plotcolors[-1]
-##     cbar_plot = cbar_plot +
-##       geom_polygon(
-##         data=polystart, aes(x=x, y=y),
-##         show.legend = FALSE,
-##         inherit.aes = FALSE,
-##         fill = colors[1],
-##         color=border_color
-##       )
-##   }
-
-##   if (any(inf_breaks > 1)) { # Add > arrow for +Inf
-##     lastv = breaks[n_breaks]
-##     polyend = data.frame(
-##       x = c(xmin, xmax, 1),
-##       y = c(rep(lastv, 2), lastv + diff(r_breaks) * triangle_size)
-##     )
-##     plotcolors = plotcolors[-length(plotcolors)]
-##     cbar_plot = cbar_plot +
-##       geom_polygon(
-##         data=polyend, aes(x=x, y=y),
-##         show.legend = FALSE,
-##         inherit.aes = FALSE,
-##         fill = colors[length(colors)],
-##         color=border_color
-##       )
-##   }
-
-##   if (legend_direction == "horizontal") { #horizontal legend
-##     mul = 1
-##     x = xmin
-##     xend = xmax
-##     cbar_plot = cbar_plot + coord_flip()
-##     angle = 0
-##     legend_position = xmax + 0.1 * spacing_scaling
-##   } else { # vertical legend
-##     mul = -1
-##     x = xmax
-##     xend = xmin
-##     angle = -90
-##     legend_position = xmax + 0.2 * spacing_scaling
-##   }
-
-##   cbar_plot = cbar_plot +
-##     ## Modify this section to control tick sizes
-##     geom_segment(
-##       data=data.frame(y = breaks, yend = breaks),
-##       aes(y=y, yend=yend),
-##       x = x - 0 * mul * spacing_scaling, xend = xend,
-##       ## x = x - 0.05 * mul * spacing_scaling, xend = xend,
-##       inherit.aes = FALSE
-##     ) +
-##     annotate(
-##       geom = 'text', x = x - 0.1 * mul * spacing_scaling, y = breaks,
-##       label = labels,
-##       size = font_size
-##     ) +
-##     scale_x_continuous(expand = c(expand_size,expand_size)) +
-##     scale_fill_manual(values=plotcolors) +
-##     theme_void()
-
-##   if (!is.null(legend_title)) { # Add legend title
-##     cbar_plot = cbar_plot +
-##       annotate(geom = 'text', x = legend_position, y = mean(r_breaks),
-##                label = legend_title,
-##                angle = angle,
-##                size = font_size)
-##   }
-##   cbar_plot
-## }
-
-## myplotfun1 = function(ensemble_fcst, fcst, varname, ylab) {
-##   ## Plot individual ensemble members with ensemble mean
-##   ##
-##   ## Args:
-##   ##   ensemble_fcst : data.frame. Ensemble forecast data.
-##   ##   fcst          : data.frame. Ensemble mean forecast data.
-##   ##   varname       : character. Variable to plot.
-##   ##   ylab          : character or expression. Y-axis label.
-##   ##
-##   ## Return:
-##   ##   Plot object
-##   plotdata1 =
-##     ensemble_fcst %>%
-##     unite(model_member, source_id, member, remove=FALSE)
-
-##   plotdata2 = fcst %>%
-##     filter(variable %in% varname) %>%
-##     dplyr::select(init_year, ens_mean, obs) %>%
-##     gather(key, value, -init_year)
-
-##   plotdata2$key = factor(
-##     plotdata2$key,
-##     levels=c("ens_mean", "obs"),
-##     labels=c("Ensemble mean", "Observed")
-##   )
-
-##   p = ggplot(
-##     data=plotdata1,
-##     aes_string(
-##       y=varname,
-##       x="init_year",
-##       group="model_member"
-##     )
-##   ) +
-##     geom_line(color="lightgrey") +
-##     geom_hline(yintercept=0, size=0.25) +
-##     geom_line(
-##       data=plotdata2,
-##       aes(y=value, x=init_year, color=key),
-##       inherit.aes = FALSE
-##     ) +
-##     xlab("Initialisation year") +
-##     ylab(ylab) +
-##     theme(
-##       legend.title = element_blank(),
-##       legend.position = "bottom",
-##       legend.direction = "vertical"
-##     )
-##   p
-## }
-
-
-## myplotfun2 = function(fcst, varname, ylab) {
-##   ## Plot variance-adjusted ensemble mean data
-##   ##
-##   ## Args:
-##   ##   fcst    : data.frame. Ensemble mean forecast data.
-##   ##   varname : character. Variable to plot.
-##   ##   ylab    : character or expression. Y-axis label.
-##   ## Return:
-##   ##   Plot object
-##   levels = c("obs", "ens_mean_var_adj", "ens_mean_lag_var_adj")
-##   labels=c("Observations", "Variance-adjusted", "Variance-adjusted and lagged")
-##   fcst = fcst %>% mutate(period_start = init_year + 1)
-##   plotdata =
-##     fcst %>%
-##     filter(variable %in% varname) %>%
-##     pivot_longer(
-##       c(-period_start, -init_year, -variable),
-##       names_to="statistic",
-##       values_to=varname
-##     ) %>%
-##     filter(statistic %in% levels)
-
-##   plotdata$statistic = factor(
-##     plotdata$statistic,
-##     levels=levels,
-##     labels=labels
-##   )
-
-##   p = ggplot(data=plotdata) +
-##     geom_line(
-##       aes_string(
-##         y=varname,
-##         x="period_start",
-##         group="statistic",
-##         colour="statistic"
-##       )
-##     ) +
-##     xlab("Initialisation year") +
-##     ylab(ylab) +
-##     theme(
-##       legend.title = element_blank(),
-##       legend.position = "bottom",
-##       legend.direction = "vertical"
-##     )
-##   p
-## }
-
-
-## myplotfun3 = function(ensemble_fcst, fcst, varname, ylab) {
-##   ## Plot variance-adjusted ensemble mean data
-##   ##
-##   ## Args:
-##   ##   fcst    : data.frame. Ensemble mean forecast data.
-##   ##   varname : character. Variable to plot.
-##   ##   ylab    : character or expression. Y-axis label.
-##   ## Return:
-##   ##   Plot object
-##   ## ensemble_fcst = nao_matched_ensemble_fcst
-##   ## fcst = nao_matched_fcst
-
-##   ## Ensemble plotdata
-##   plotdata1 =
-##     ensemble_fcst %>%
-##     filter(variable %in% varname) %>%
-##     unite(model_member, source_id, member, remove=FALSE)
-
-##   ## levels = c("obs", "ens_mean", "ens_mean_var_adj", "ens_mean_lag_var_adj")
-##   ## labels=c("Observations", "Raw ensemble mean", "Variance-adjusted", "Variance-adjusted and lagged")
-##   levels = c("obs", "full_ens_mean", "ens_mean")
-##   labels=c("Observations", "Ensemble mean", "NAO-matched ensemble mean")
-##   fcst = fcst %>% mutate(period_start = init_year + 1)
-##   plotdata2 =
-##     fcst %>%
-##     filter(variable %in% varname) %>%
-##     pivot_longer(
-##       c(-period_start, -init_year, -variable),
-##       names_to="statistic",
-##       values_to=varname
-##     ) %>%
-##     filter(statistic %in% levels)
-
-##   plotdata2$statistic = factor(
-##     plotdata2$statistic,
-##     levels=levels,
-##     labels=labels
-##   )
-
-##   p = ggplot(
-##     data=plotdata1,
-##     aes_string(
-##       y="value",
-##       x="init_year",
-##       group="model_member"
-##     )
-##   ) +
-##     geom_point(color="lightgrey") +
-##     geom_hline(yintercept=0, size=0.25) +
-##     geom_line(
-##       data=plotdata2,
-##       aes_string(
-##         y=varname,
-##         x="init_year",
-##         group="statistic",
-##         color="statistic"
-##       ),
-##       inherit.aes = FALSE
-##     ) +
-##     xlab("Initialisation year") +
-##     ylab(ylab) +
-##     theme(
-##       legend.title=element_blank(),
-##       legend.position="bottom",
-##       legend.direction="vertical"
-##     )
-##   p
-## }
-
-## myplotfun4 = function(x, model_display_names) {
-
-##   ## We construct the legend using the model, so here we convert
-##   ## it to a factor and change the labels to those we want to
-##   ## display (defined in preamble)
-##   x = x %>% mutate(model = as.factor(model))
-##   x$model = do.call("recode_factor", c(list(x$model), model_display_names))
-##   obs =
-##     x %>%
-##     dplyr::select(year, obs) %>%
-##     ## dplyr::select(clim_season, year, obs) %>%
-##     distinct(year, .keep_all = TRUE) %>%
-##     mutate(type = "Observed")
-
-##   p = ggplot() +
-##     theme_bw() +
-##     geom_ribbon(
-##       aes(ymin=Q25, ymax=Q75, x=year, fill=model),
-##       alpha=0.5, data=x
-##     ) +
-##     geom_line(
-##       aes(y=Q50, x=year, colour=model), data=x
-##     ) +
-##     ylab(expression(Streamflow~(m^{3}~s^{-1}))) +
-##     xlab("") +
-##     scale_x_continuous(breaks = pretty_breaks()) +
-##     ## N.B. use alpha to create another legend
-##     ## https://aosmith.rbind.io/2020/07/09/ggplot2-override-aes/
-##     geom_point(
-##       aes(y=obs, x=year, alpha="Observed"),
-##       color = "black",
-##       data=obs
-##     ) +
-##     scale_alpha_manual(name=NULL, values=1, breaks="Observed") +
-##     ggtitle(sprintf("ID = %d", stn_id)) +
-##     theme(legend.position = "bottom",
-##           legend.direction = "vertical",
-##           legend.title = element_blank())
-
-##   p = p + guides(alpha = guide_legend(order = 1),
-##                  fill = guide_legend(order = 2),
-##                  color = guide_legend(order = 2))
-##   p
-## }
-
-## myplotfun5 = function(x) {
-##   rdbu_pal = RColorBrewer::brewer.pal(9, "RdBu")
-##   p =
-##     ggplot() +
-##     geom_sf(data = europe_boundary, color=NA, fill="lightgrey") +
-##     geom_sf(data = uk_boundary) +
-##     geom_sf(data = skill, aes(fill = skill), shape=21) +
-##     facet_wrap(. ~ period, ncol = 3, labeller = label_parsed) +
-##     ## geom_sf(data = catchment_boundaries) +
-##     coord_sf(xlim=c(-8, 2), ylim=c(50, 60), default_crs = st_crs(4326)) +
-##     ## theme(legend.position = "bottom") +
-##     guides(fill = guide_colorbar(
-##              ## barwidth = 15,
-##              title="MSSS",
-##              title.position="top",
-##              ## legend.position = "bottom"
-##              legend.position = "right"
-##            )) +
-##     scale_fill_gradientn(
-##       colours = c(rdbu_pal[2], rdbu_pal[5], rdbu_pal[9]),
-##       values = scales::rescale(c(-0.2, 0, 0.8))
-##     )
-##   p
-## }
-
-## myplotfun6 = function(x) {
-##   p =
-##     ggplot() +
-##     geom_sf(data = europe_boundary, color=NA, fill="lightgrey") +
-##     geom_sf(data = uk_boundary) +
-##     geom_sf(data = skill, aes(fill = difference), shape=21) +
-##     facet_wrap(. ~ period, ncol = 3, labeller = label_parsed) +
-##     ## geom_sf(data = catchment_boundaries) +
-##     coord_sf(xlim=c(-8, 2), ylim=c(50, 60), default_crs = st_crs(4326)) +
-##     ## theme(legend.position = "bottom") +
-##     guides(fill = guide_colorbar(
-##              ## barwidth = 15,
-##              title="Diff",
-##              title.position="top",
-##              legend.position = "right"
-##            )) +
-##     scale_fill_gradientn(
-##       colours = c(rdbu_pal[2], rdbu_pal[5], rdbu_pal[9]),
-##       values = scales::rescale(c(-0.4, 0, 0.2))
-##     )
-##   p
-## }
-
-## ## csv_to_sqlite <- function(csv_file, sqlite_file, table_name,
-## ##                           delim = ",",
-## ##                           pre_process_size = 1000, chunk_size = 50000,
-## ##                           show_progress_bar = TRUE, ...) {
-## ##   ## Save a delimited text table into a single table sqlite database
-## ##   ##
-## ##   ## The table can be a comma separated (csv) or a tab separated (tsv) or any
-## ##   ## other delimited text file. The file is read in chunks. Each chunk is copied
-## ##   ## in the same sqlite table database before the next chunk is loaded into
-## ##   ## memory. See the INBO tutorial \href{https://github.com/inbo/tutorials/blob/master/source/data-handling/large-files-R.Rmd}{Handling large files in R}
-## ##   ## to learn more about.
-## ##   ##
-## ##   ## @section Remark:
-## ##   ## The \code{callback} argument in the \code{read_delim_chunked} function call
-## ##   ## refers to the custom written callback function `append_to_sqlite` applied
-## ##   ## to each chunk.
-## ##   ##
-## ##   ## @param csv_file Name of the text file to convert.
-## ##   ## @param sqlite_file Name of the newly created sqlite file.
-## ##   ## @param table_name Name of the table to store the data table in the sqlite
-## ##   ##   database.
-## ##   ## @param delim Text file delimiter (default ",").
-## ##   ## @param pre_process_size Number of lines to check the data types of the
-## ##   ##   individual columns (default 1000).
-## ##   ## @param chunk_size Number of lines to read for each chunk (default 50000).
-## ##   ## @param show_progress_bar Show progress bar (default TRUE).
-## ##   ## @param ... Further arguments to be passed to \code{read_delim}.
-## ##   ##
-## ##   ## @return a SQLite database
-## ##   ## @family Data_handling_utilities
-## ##   con <- dbConnect(SQLite(), dbname = sqlite_file)
-
-## ##   # read a first chunk of data to extract the colnames and types
-## ##   # to figure out the date and the datetime columns
-## ##   df <- read_delim(csv_file, delim = delim, n_max = pre_process_size, ...)
-## ##   date_cols <- df %>%
-## ##       select_if(is.Date) %>%
-## ##       colnames()
-## ##   datetime_cols <- df %>%
-## ##       select_if(is.POSIXt) %>%
-## ##       colnames()
-
-## ##   # write the first batch of lines to SQLITE table, converting dates to string
-## ##   # representation
-## ##   df <- df %>%
-## ##     mutate_at(.vars = date_cols, .funs = as.character.Date) %>%
-## ##     mutate_at(.vars = datetime_cols, .funs = as.character.POSIXt)
-## ##   dbWriteTable(con, table_name, df, overwrite = TRUE)
-
-## ##   # readr chunk functionality
-## ##   read_delim_chunked(
-## ##     csv_file,
-## ##     callback = append_to_sqlite(con = con, table_name = table_name,
-## ##                                 date_cols = date_cols,
-## ##                                 datetime_cols = datetime_cols),
-## ##     delim = delim,
-## ##     skip = pre_process_size + 1,
-## ##     chunk_size = chunk_size,
-## ##     progress = show_progress_bar,
-## ##     col_names = names(attr(df, "spec")$cols),
-## ##     ...)
-## ##   dbDisconnect(con)
-## ## }
-
-## ## append_to_sqlite <- function(con, table_name,
-## ##                              date_cols, datetime_cols) {
-## ##   ## Callback function that appends new sections to the SQLite table.
-## ##   ##
-## ##   ## Copied from inborutils::append_to_sqlite
-## ##   ##
-## ##   ## Args:
-## ##   ## con A valid connection to SQLite database.
-## ##   ## table_name Name of the table to store the data table in the sqlite
-## ##   ##   database.
-## ##   ## date_cols Name of columns containing Date objects
-## ##   ## datetime_cols Name of columns containint POSIXt objects.
-## ##   ##
-## ##   function(x, pos) {
-## ##     ## Args:
-## ##     ## x Data.frame we are reading from.
-## ##     x <- as.data.frame(x)
-## ##     x <- x %>%
-## ##       mutate_at(.vars = date_cols, .funs = as.character.Date) %>%
-## ##       mutate_at(.vars = datetime_cols, .funs = as.character.POSIXt)
-## ##     # append data frame to table
-## ##     dbWriteTable(con, table_name, x, append = TRUE)
-## ##   }
-## ## }
-
-## ## get_short_name = function(variable) {
-## ##   if (variable == 'european_precip') short_name = 'pr'
-## ##   if (variable == 'uk_precip') short_name = 'pr'
-## ##   if (variable == 'amv') short_name = 'tas'
-## ##   if (variable == 'nao') short_name = 'psl'
-## ##   short_name
-## ## }
-
-## ## esmvaltool_file_pattern = function(project,
-## ##                                    source,
-## ##                                    mip,
-## ##                                    init_year,
-## ##                                    member,
-## ##                                    variable,
-## ##                                    provenance_file = FALSE) {
-## ##   ## Construct a regular expression.
-## ##   ##
-## ##   ## This function constructs a regular expression
-## ##   ## to match an ESMValTool output file.
-
-## ##   short_name = get_short_name(variable)
-## ##   if (provenance_file) {
-## ##     suffix = "_provenance.xml"
-## ##   } else {
-## ##     suffix = ".nc"
-## ##   }
-## ##   if (toupper(project) == "CMIP6") {
-## ##     experiment = paste0("dcppA-hindcast", "_", "s", init_year, "-", member)
-## ##     grid_time = "[a-z]+_[0-9]{4}-[0-9]{4}"
-## ##   } else {
-## ##     experiment = paste0("decadal", init_year, "_", member)
-## ##     grid_time = "[0-9]{4}-[0-9]{4}"
-## ##   }
-## ##   ptn = paste0(
-## ##     toupper(project), "_", source, "_", mip, "_", experiment,
-## ##     "_", short_name, "_", grid_time, suffix
-## ##   )
-## ##   ptn
-## ## }
-
-## ## retrieve_model_output_files = function(project,
-## ##                                        source,
-## ##                                        mip,
-## ##                                        init_year,
-## ##                                        member,
-## ##                                        variable) {
-## ##   ## Get ESMValTool input files.
-## ##   ##
-## ##   ## This function retrieves the input files which
-## ##   ## were used to produce a certain ESMValTool output.
-## ##   ## It does this by parsing the XML provenance file
-## ##   ## which is created alongside each ESMValTool output netCDF.
-
-## ##   short_name = get_short_name(variable)
-## ##   if (toupper(project) == "CMIP6") {
-## ##     recipe_root = esmvaltool_cmip6_root
-## ##   } else {
-## ##     recipe_root = esmvaltool_cmip5_root
-## ##   }
-## ##   ptn = esmvaltool_file_pattern(
-## ##     project, source, mip, init_year,
-## ##     member, variable, provenance_file=TRUE
-## ##   )
-## ##   prov_file = list.files(
-## ##     file.path(recipe_root, "preproc", variable, short_name),
-## ##     ptn,
-## ##     full.names = TRUE
-## ##   )
-## ##   ## Parse each XML provenance file to extract
-## ##   ## the paths of input files.
-## ##   fs = c()
-## ##   if (length(prov_file) > 0) {
-## ##     for (i in 1:length(prov_file)) {
-## ##       prov = read_xml(prov_file)
-## ##       fn = xml_attr(
-## ##         xml_find_all(prov, "//prov:usedEntity"), "ref"
-## ##       ) %>%
-## ##         gsub("file:", "", .)
-## ##       fs = c(fs, fn)
-## ##     }
-## ##     fs = sort(fs, decreasing = FALSE)
-## ##   }
-## ##   fs
-## ## }
-
-## ## retrieve_esmvaltool_output_files = function(project,
-## ##                                             source,
-## ##                                             mip,
-## ##                                             init_year,
-## ##                                             member,
-## ##                                             variable) {
-## ##   ## Get ESMValTool output files.
-## ##   ##
-## ##   ## This function retrieves ESMValTool output files. It is
-## ##   ## simpler than `retrieve_model_output_files()` because
-## ##   ## it is only concerned with the ESMValTool output, rather
-## ##   ## than the raw input data used to create them.
-
-## ##   short_name = get_short_name(variable)
-## ##   if (toupper(project) == "CMIP6") {
-## ##     recipe_root = esmvaltool_cmip6_root
-## ##   } else {
-## ##     recipe_root = esmvaltool_cmip5_root
-## ##   }
-## ##   ptn = esmvaltool_file_pattern(project, source, mip, init_year, member, variable)
-## ##   fs = list.files(
-## ##     file.path(recipe_root, "work", variable, variable),
-## ##     ptn,
-## ##     full.names=TRUE
-## ##   )
-## ##   fs
-## ## }
-
-## ## interpret_netcdf_time = function(ds) {
-## ##   ## Interpret netCDF time.
-## ##   tunits = ncatt_get(ds, "time", "units")
-## ##   time = ncvar_get(ds, "time")
-## ##   tustr = strsplit(tunits$value, " ")
-## ##   tdstr = strsplit(unlist(tustr)[3], "-")
-## ##   tmonth = as.integer(unlist(tdstr)[2])
-## ##   tday = as.integer(substring(unlist(tdstr)[3],1,2))
-## ##   tyear = as.integer(unlist(tdstr)[1])
-## ##   time_val = as.Date(chron(time,origin=c(tmonth, tday, tyear)))
-## ##   time_val
-## ## }
-
-## ## extract_netcdf_data = function(fpath, short_name) {
-## ##   ## Extract data from netCDF.
-## ##   ##
-## ##   ## This function converts monthly gridded values
-## ##   ## to a RasterBrick object.
-## ##   ds = nc_open(fpath)
-## ##   varsize = ds$var[[short_name]]$varsize
-## ##   ndims = ds$var[[short_name]]$ndims
-## ##   ## Time dimension:
-## ##   ts = try(nc.get.time.series(ds), silent=TRUE)
-## ##   if (inherits(ts, "try-error") | is.na(ts)) {
-## ##     ts = interpret_netcdf_time(ds)
-## ##   }
-## ##   ts = ts %>% as.POSIXct() %>% as.Date()
-## ##   n_time = length(ts)
-## ##   lat = ncvar_get(ds, "lat")
-## ##   nlat = length(lat)
-## ##   lat_sn = lat[1] < lat[2]
-## ##   lon = ncvar_get(ds, "lon")
-## ##   nlon = length(lon)
-## ##   ## Exact boundaries:
-## ##   ymn = min(lat) - (diff(lat)[1] / 2)
-## ##   ymx = max(lat) + (diff(lat)[nlat-1] / 2)
-## ##   xmn = min(lon) - (diff(lon)[1] / 2)
-## ##   xmx = max(lon) + (diff(lon)[nlon-1] / 2)
-## ##   shift_lon = lon[1] >= 0.
-## ##   ## Data
-## ##   maps = list()
-## ##   for (i in 1:n_time) {
-## ##     ## Data
-## ##     start = rep(1, ndims)
-## ##     start[ndims] = i
-## ##     count = varsize
-## ##     count[ndims] = 1
-## ##     arr = ncvar_get(ds, short_name, start=start, count=count)
-## ##     arr = t(arr)
-## ##     ## Transpose to n * m, where n is number of rows and m is number of columns
-## ##     if (lat_sn) {
-## ##       arr = arr[rev(seq_len(nrow(arr))),]
-## ##     }
-## ##     ## Account for 0-360 longitude values
-## ##     if (shift_lon) {
-## ##       xmni = xmn - 180
-## ##       xmxi = xmx - 180
-## ##       arr = arr[,c(seq(nlon / 2 + 1, nlon), seq(1, nlon / 2))]
-## ##     } else {
-## ##       xmni = xmn
-## ##       xmxi = xmx
-## ##     }
-## ##     ## x = raster(tas_i, xmn=-180, xmx=180, ymn=-90, ymx=90)
-## ##     x = raster(
-## ##       arr, xmn=xmni, xmx=xmxi, ymn=ymn, ymx=ymx,
-## ##       crs="+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
-## ##     )
-## ##     maps[[i]] = x
-## ##   }
-## ##   nc_close(ds)
-## ##   out = list(times = ts, maps = brick(maps))
-## ## }
-
-## ## season_data = read.table(header=TRUE, text="
-## ## month clim_season
-## ## 1 djfm
-## ## 2 djfm
-## ## 3 djfm
-## ## 4 am
-## ## 5 am
-## ## 6 jjas
-## ## 7 jjas
-## ## 8 jjas
-## ## 9 jjas
-## ## 10 on
-## ## 11 on
-## ## 12 djfm
-## ## ")
-
-## ## extract_forecast_data = function(project,
-## ##                                  source,
-## ##                                  mip,
-## ##                                  init_year,
-## ##                                  member,
-## ##                                  variable) {
-## ##   ## Extract forecast data for catchments.
-## ##   ##
-## ##   ## This function extracts decadal forecast data for
-## ##   ## a given climate variable for each UKBN catchment
-## ##   ## (defined in global variable `ukbn2_catchments`).
-## ##   ## It uses exact_extract(x, y, 'mean', weights='area')
-## ##   short_name = get_short_name(variable)
-## ##   fs = retrieve_model_output_files(
-## ##     project, source, mip, init_year, member, variable
-## ##   )
-## ##   ## Return NULL if no files are returned
-## ##   if (length(fs) == 0) {
-## ##     return(NULL)
-## ##   }
-## ##   ## Loop through each file and extract data
-## ##   catchment_data_list = list()
-## ##   for (i in 1:length(fs)) {
-## ##     f = fs[i]
-## ##     data = extract_netcdf_data(f, short_name)
-## ##     maps = data[["maps"]]
-## ##     ts = data[["times"]]
-## ##     ## Extract data from maps using exact_extract
-## ##     d = exact_extract(
-## ##       maps,
-## ##       ukbn2_catchments,
-## ##       'mean', weights='area'
-## ##     )
-## ##     names(d) = ts
-## ##     d$ID = ukbn2_catchments$ID
-## ##     d =
-## ##       d %>%
-## ##       pivot_longer(
-## ##         !ID,
-## ##         names_to = "time",
-## ##         values_to = short_name
-## ##       ) %>%
-## ##       mutate(time = as.Date(time))
-## ##     catchment_data_list[[i]] = d
-## ##   }
-## ##   ## Join data frames
-## ##   catchment_data = do.call("rbind", catchment_data_list)
-## ##   ## Assign seasons to data
-## ##   catchment_data =
-## ##     catchment_data %>%
-## ##     arrange(ID, time) %>%
-## ##     mutate(
-## ##       year = as.integer(format(time, "%Y")),
-## ##       month = as.integer(format(time, "%m"))
-## ##     ) %>%
-## ##     dplyr::select(-time) %>%
-## ##     left_join(season_data) %>%
-## ##     mutate(season_year = ifelse(month == 12 & clim_season == "djfm", year + 1, year))
-## ##   catchment_data
-## ## }
-
-
-## ## extract_index_data = function(project,
-## ##                               source,
-## ##                               mip,
-## ##                               init_year,
-## ##                               member,
-## ##                               variable) {
-## ##   fs = retrieve_esmvaltool_output_files(
-## ##     project, source, mip, init_year, member, variable
-## ##   )
-## ##   ## In case no files are returned
-## ##   if (length(fs) == 0) {
-## ##     return(NULL)
-## ##   }
-## ##   ds = nc_open(fs)
-## ##   nao = ncvar_get(ds, variable)
-## ##   ## NB season year is taken as the year in which
-## ##   ## the last month of the season falls [this is
-## ##   ## different to how we define season_year in
-## ##   ## nao-matching.R and subsequently]
-## ##   season_year = ncvar_get(ds, "season_year")
-## ##   print(season_year)
-## ##   clim_season = ncvar_get(ds, "clim_season")
-## ##   ## TODO better to do this in function
-## ##   ts = try(nc.get.time.series(ds), silent=TRUE)
-## ##   if (inherits(ts, "try-error") | is.na(ts)) {
-## ##     ts = interpret_netcdf_time(ds)
-## ##   }
-## ##   ts = ts %>% as.POSIXct() %>% as.Date()
-## ##   n_time = length(ts)
-## ##   nc_close(ds)
-## ##   nao_df = data.frame(
-## ##     ts,
-## ##     season_year,
-## ##     tolower(clim_season),
-## ##     nao
-## ##   )
-## ##   names(nao_df) = c("time", "season_year", "clim_season", variable)
-## ##   nao_df =
-## ##     nao_df %>%
-## ##     mutate(
-## ##       year = as.integer(format(time, "%Y")),
-## ##       month = as.integer(format(time, "%m"))
-## ##     ) %>%
-## ##     dplyr::select(-time) %>%
-## ##     left_join(season_data) %>%
-## ##     mutate(season_year = ifelse(month == 12 & clim_season == "djfm", year + 1, year))
-## ##   nao_df
-## ## }
