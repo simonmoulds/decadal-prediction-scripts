@@ -12,33 +12,39 @@ library(scales)
 library(arrow)
 library(sf)
 library(smoothr)
-## library(gamlss)
-## library(rnrfa)
 library(yaml)
 
 options(dplyr.summarise.inform = FALSE)
 options(bitmapType = 'cairo') # For server
 
-## ## FOR TESTING:
-## config = read_yaml('config/config_1.yml')
-## aggregation_period = "yr2to5_lag"
-## outputroot = 'results/exp1'
-## cwd = 'workflow/scripts'
-
-## Extract configuration info
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  config = read_yaml(args[1])
-  aggregation_period = args[2]
-  outputroot = args[3]
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
+if (exists("snakemake")) {
+  config <- snakemake@config
+  aggregation_period <- snakemake@wildcards[["aggr_plot"]]
+  outputroot <- snakemake@params[["outputdir"]]
+  snakemake@source("utils.R")
+  snakemake@source("plotting.R")
+} else {
+  ## FOR TESTING:
+  config = read_yaml('config/config_1.yml')
+  aggregation_period = "yr2to5_lag"
+  outputroot = 'results'
+  cwd = 'workflow/decadal-prediction-scripts/R'
+  source(file.path(cwd, "utils.R"))
+  source(file.path(cwd, "plotting.R"))
 }
-source(file.path(cwd, "utils.R"))
-source(file.path(cwd, "plotting.R"))
+## ## Extract configuration info
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   config = read_yaml(args[1])
+##   aggregation_period = args[2]
+##   outputroot = args[3]
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## source(file.path(cwd, "utils.R"))
+## source(file.path(cwd, "plotting.R"))
 config[["modelling"]] <- parse_config_modelling(config)
-
 fig_dpi <- 600
 skill_measure <- "crpss"
 all_skill_measures <- c("crps_fcst", "crps_ens_fcst", "crps_climat", "crpss", "aic")
@@ -1259,7 +1265,7 @@ ggsave(file.path(output_dir, "fig3.png"), plot = p, width = 6, height = 4.25, un
 ## ####################################################### ##
 
 r2 <-
-  open_dataset("results/exp1/analysis/yr2to9_lag/input") %>%
+  open_dataset("results/analysis/yr2to9_lag/input") %>%
   collect() %>%
   filter(subset %in% "observed") %>%
   group_by(ID) %>%
@@ -2073,16 +2079,17 @@ make_annotation <- function(acc, rpc) {
   annotation
 }
 
-full_fcst = load_fcst("yr2to9_lag")
-obs = read_parquet(
-  file.path(outputroot, "analysis", "yr2to9_lag", "obs_study_period.parquet")
+full_fcst <- load_fcst("yr2to9_lag")
+obs <- read_parquet(
+  file.path(outputroot, "analysis", "yr2to9_lag", "observed.parquet")
 )
 
-ensemble_fcst = read_parquet(
-  file.path(outputroot, "analysis", "yr2to9_lag", "ensemble_fcst.parquet")
+ensemble_fcst <- read_parquet(
+  file.path(outputroot, "analysis", "yr2to9_lag", "ensemble_forecast.parquet")
 )
+ensemble_fcst <- ensemble_fcst %>% pivot_wider(names_from="variable", values_from="value")
 
-nao_matched_ensemble_fcst = read_parquet(
+nao_matched_ensemble_fcst <- read_parquet(
   file.path(outputroot, "analysis", "yr2to9_lag", "matched_ensemble.parquet")
 )
 

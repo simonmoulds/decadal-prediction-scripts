@@ -14,34 +14,41 @@ options(dplyr.summarise.inform = FALSE)
 ## config = read_yaml('config/config_1.yml')
 ## obspath = 'results/intermediate/obs.parquet'
 ## fcstpath = 'results/intermediate/ensemble-forecast'
-## aggr_period = 'yr2to9_lag'
+## aggregation_period = 'yr2to9_lag'
 ## outputroot = 'results/exp2/analysis'
 ## cwd = 'workflow/scripts'
 
-## extract configuration info
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  config = read_yaml(args[1])
-  obspath = args[2]
-  fcstpath = args[3]
-  aggr_period = args[4]
-  outputroot = args[5]
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
-}
-source(file.path(cwd, "utils.R"))
+config <- snakemake@config
+obspath <- snakemake@input[["obs"]]
+fcstpath <- snakemake@input[["fcst"]]
+aggregation_period <- snakemake@wildcards[["aggr"]]
+outputroot <- snakemake@params[["outputdir"]]
+snakemake@source("utils.R")
+
+## ## extract configuration info
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   config = read_yaml(args[1])
+##   obspath = args[2]
+##   fcstpath = args[3]
+##   aggregation_period = args[4]
+##   outputroot = args[5]
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## source(file.path(cwd, "utils.R"))
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 
 ## Parse aggregation period specification
-period = config$aggregation_period[[aggr_period]]
+period = config$aggregation_period[[aggregation_period]]
 lead_tm = period$lead_time
 start = min(lead_tm)
 end = max(lead_tm)
 study_period = period$study_period
 
 ## Make output directory
-outputdir = file.path(outputroot, aggr_period)
+outputdir = file.path(outputroot, aggregation_period)
 dir.create(outputdir, recursive = TRUE, showWarnings = FALSE)
 
 ## TODO put these in config somehow

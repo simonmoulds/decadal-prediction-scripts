@@ -22,26 +22,40 @@ options(dplyr.summarise.inform = FALSE)
 
 ## ## TESTING
 ## config = read_yaml('config/config_1.yml')
-## obspath = 'results/exp1/yr2to9_lag/obs.parquet'
-## fcstpath = 'results/intermediate/ensemble-forecast'
-## aggr_period = 'yr2to9_lag'
-## outputroot = 'results/exp1/analysis'
+## obspath = 'results/analysis/yr2to9_lag/observed.parquet'
+## fcstpath = 'results/analysis/yr2to9_lag/ensemble_forecast.parquet'
+## aggregation_period = 'yr2to9_lag'
+## outputroot = 'results/analysis'
 ## cwd = 'workflow/scripts'
 
-## extract configuration info
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  config = read_yaml(args[1])
-  obspath = args[2]
-  fcstpath = args[3]
-  aggr_period = args[4]
-  outputroot = args[5]
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
-}
-## TODO put these functions in an R package
-source(file.path(cwd, "utils.R"))
+config <- snakemake@config
+obspath <- snakemake@input[["obs"]]
+fcstpath <- snakemake@input[["fcst"]]
+aggregation_period <- snakemake@wildcards[["aggr"]]
+outputroot <- snakemake@params[["outputdir"]]
+snakemake@source("utils.R")
+
+## config = read_yaml('config/config_1.yml')
+## obspath = 'results/analysis/yr2to9_lag/observed.parquet'
+## fcstpath = 'results/analysis/yr2to9_lag/ensemble_forecast.parquet'
+## aggregation_period = 'yr2to9_lag'
+## outputroot = 'results/analysis'
+## cwd = 'workflow/scripts'
+
+## ## extract configuration info
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   config = read_yaml(args[1])
+##   obspath = args[2]
+##   fcstpath = args[3]
+##   aggregation_period = args[4]
+##   outputroot = args[5]
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## ## TODO put these functions in an R package
+## source(file.path(cwd, "utils.R"))
 ## config = parse_config_io(config)
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 
@@ -52,11 +66,11 @@ models <- c(
   config$ensemble_data$cmip5$models,
   config$ensemble_data$cmip6$models
 )
-climate_vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
+## climate_vars = c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
 
 ## Parse aggregation period specification
 ## period = config$aggregation_period[[j]]
-period = config$aggregation_period[[aggr_period]]
+period = config$aggregation_period[[aggregation_period]]
 lead_tm = period$lead_time
 start = min(lead_tm)
 end = max(lead_tm)
@@ -69,7 +83,7 @@ label = period$name
 ## Only run if hindcast (TODO work out better way to do this)
 if (period$hindcast) {
 
-  outputdir = file.path(outputroot, aggr_period)
+  outputdir = file.path(outputroot, aggregation_period)
   ## if (dir.exists(outputdir))
   ##   unlink(outputdir, recursive = TRUE)
   ## dir.create(outputdir, recursive = TRUE)
@@ -134,11 +148,11 @@ if (period$hindcast) {
   ensemble_fcst <- read_parquet(fcstpath)
 
   ## Take the ensemble mean
-  group_vars = c("project", "mip", "source_id", "member", "init_year")
-  ens_mean_group_vars = c("init_year", "variable")
-  fcst =
+  group_vars <- c("project", "mip", "source_id", "member", "init_year")
+  ens_mean_group_vars <- c("init_year", "variable")
+  fcst <-
     ensemble_fcst %>%
-    pivot_longer(starts_with(climate_vars), names_to = "variable", values_to = "value") %>%
+    ## pivot_longer(starts_with(climate_vars), names_to = "variable", values_to = "value") %>%
     ## pivot_longer(all_of(vars), names_to = "variable", values_to = "value") %>%
     group_by_at(ens_mean_group_vars) %>%
     summarize(
@@ -243,9 +257,9 @@ if (period$hindcast) {
   ## in the previous section. Here we standardize the
   ## individual ensemble members.
   group_vars = c("source_id", "member", "variable")
-  ensemble_fcst =
+  ensemble_fcst <-
     ensemble_fcst %>%
-    pivot_longer(starts_with(climate_vars), names_to = "variable", values_to = "value") %>%
+    ## pivot_longer(starts_with(climate_vars), names_to = "variable", values_to = "value") %>%
     ## pivot_longer(all_of(vars), names_to = "variable", values_to = "value") %>%
     group_by_at(group_vars) %>%
     mutate(std = value / sd(value, na.rm=TRUE))

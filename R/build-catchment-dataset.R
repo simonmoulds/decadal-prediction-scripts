@@ -13,21 +13,42 @@ options(dplyr.summarise.inform = FALSE)
 ## ## TESTING
 ## config = read_yaml("config/config_2.yml")
 ## obspath = "results/intermediate/obs.parquet"
-## aggr_period = "yr2to5_lag"
+## aggregation_period = "yr2to5_lag"
 ## outputroot = "results/exp2"
 ## cwd = "workflow/scripts"
 
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  config = read_yaml(args[1])
-  obspath = args[2]
-  aggr_period = args[3]
-  outputroot = args[4]
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
+if (exists("snakemake")) {
+  config <- snakemake@config
+  obspath <- snakemake@input[["obs"]]
+  metadata <- snakemake@input[["metadata"]]
+  aggregation_period <- snakemake@wildcards[["aggr"]]
+  outputroot <- snakemake@params[["outputdir"]]
+  snakemake@source("utils.R")
+} else {
+  ## TESTING
+  config <- read_yaml("config/config_1.yml")
+  obspath <- "results/intermediate/obs.parquet"
+  metadata <- "results/nrfa-metadata.parquet"
+  aggregation_period <- "yr2to5"
+  outputroot <- "results"
+  cwd = "workflow/decadal-prediction-scripts/R"
+  source(file.path(cwd, "utils.R"))
 }
-source(file.path(cwd, "utils.R")) # TODO eventually put utils in package
+
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   config = read_yaml(args[1])
+##   obspath = args[2]
+##   metadata = args[3]
+##   aggregation_period = args[4]
+##   outputroot = args[5]
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## source(file.path(cwd, "utils.R")) # TODO eventually put utils in package
+## print(config[["aggregation_period"]][[aggregation_period]]$lead_time)
+## print(config[["aggregation_period"]][[aggregation_period]]$study_period)
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 config[["subset"]] <- parse_config_subset(config)
 
@@ -42,10 +63,10 @@ observed_discharge_data <-
 station_ids <- observed_discharge_data$ID %>% unique
 n_stations <- length(station_ids)
 
-metadata <- read_parquet("results/exp1/nrfa-metadata.parquet")
+metadata <- read_parquet(metadata) #"results/exp1/nrfa-metadata.parquet")
 
 ## Parse aggregation period specification
-period = config$aggregation_period[[aggr_period]]
+period = config$aggregation_period[[aggregation_period]]
 lead_tm = period$lead_time
 start = min(lead_tm)
 end = max(lead_tm)
@@ -63,7 +84,6 @@ obs <- get_obs(obspath, extended_study_period, start = start, end = end)
 all_na <- sapply(obs, FUN=function(x) all(is.na(x))) %>% unname()
 obs <- obs[,!all_na]
 obs <- obs %>% pivot_longer(-init_year, names_to="variable", values_to="value")
-
 ## convert_to_local <- function(x, lat, lon) {
 ##   vars <- x$variable %>% unique() %>% sort()
 ##   field_vars <- grep("(N|S)\\d+\\.*\\d*_(E|W)\\d+\\.*\\d*", vars, value=TRUE)

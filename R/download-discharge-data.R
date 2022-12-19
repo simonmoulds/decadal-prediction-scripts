@@ -7,15 +7,19 @@ library(yaml)
 
 options(dplyr.summarise.inform = FALSE)
 
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  stations_file = args[1]
-  outputroot <- args[2]
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
-}
-source(file.path(cwd, "utils.R"))
+stations_file <- snakemake@input[["stations"]]
+outputroot <- snakemake@params[["outputdir"]]
+snakemake@source("utils.R")
+
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   stations_file = args[1]
+##   outputroot <- args[2]
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## source(file.path(cwd, "utils.R"))
 
 metadata = catalogue()
 
