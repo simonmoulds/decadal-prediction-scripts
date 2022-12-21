@@ -13,9 +13,6 @@ options(dplyr.summarise.inform = FALSE)
 config <- snakemake@config
 inputdir <- config[["input_data_root"]]
 outputfile <- snakemake@params[["outfile"]]
-## obspath <- snakemake@input[["obs"]]
-## fcstpath <- snakemake@input[["fcst"]]
-## aggregation_period <- snakemake@wildcards[["aggr"]]
 snakemake@source("utils.R")
 
 ## ## Extract configuration info

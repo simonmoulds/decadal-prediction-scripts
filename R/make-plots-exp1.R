@@ -90,12 +90,12 @@ fit <- load_model_fit(config, "hindcast", aggregation_period) %>% mutate(kurtosi
 
 ## For spatial plots:
 uk_boundary =
-  st_read("../data-raw/CNTR_RG_01M_2020_4326.shp") %>%
+  st_read(file.path(config[["input_data_root"]], "CNTR_RG_01M_2020_4326.shp")) %>%
   filter(CNTR_NAME %in% "United Kingdom") %>%
   st_transform(crs = 27700)
 
 europe_boundary =
-  st_read("../data-raw/CNTR_RG_01M_2020_4326.shp") %>%
+  st_read(file.path(config[["input_data_root"]], "CNTR_RG_01M_2020_4326.shp")) %>%
   filter(!CNTR_NAME %in% "United Kingdom") %>%
   st_transform(crs = 27700)
 
