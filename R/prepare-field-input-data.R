@@ -9,14 +9,22 @@ library(arrow)
 options(bitmapType = "cairo")
 options(dplyr.summarise.inform = FALSE)
 
-## TESTING
-config = read_yaml('config/config_2.yml')
-obspath = 'results/intermediate/observed-field'
-fcstpath = 'results/intermediate/ensemble-forecast-field'
-stations = 'results/exp2/stations.csv'
-aggr_period = 'yr2to9_lag'
-outputroot = 'results/exp1/analysis'
-cwd = 'workflow/scripts'
+## ## TESTING
+## config = read_yaml('config/config_2.yml')
+## obspath = 'results/intermediate/observed-field'
+## fcstpath = 'results/intermediate/ensemble-forecast-field'
+## stations = 'results/exp2/stations.csv'
+## aggr_period = 'yr2to9_lag'
+## outputroot = 'results/exp1/analysis'
+## cwd = 'workflow/scripts'
+
+config <- snakemake@config
+obspath <- snakemake@input[["obs"]]
+fcstpath <- snakemake@input[["fcst"]]
+stations <- snakemake@input[["stations"]]
+aggregation_period <- snakemake@wildcards[["aggr"]]
+outputroot <- snakemake@params[["outputdir"]]
+snakemake@source("utils.R")
 
 ## ## extract configuration info
 ## if (sys.nframe() == 0L) {
@@ -35,14 +43,14 @@ source(file.path(cwd, "utils.R"))
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 
 ## Parse aggregation period specification
-period <- config$aggregation_period[[aggr_period]]
+period <- config$aggregation_period[[aggregation_period]]
 lead_tm <- period$lead_time
 start <- min(lead_tm)
 end <- max(lead_tm)
 study_period <- period$study_period
 
 ## Make output directory
-outputdir = file.path(outputroot, aggr_period)
+outputdir = file.path(outputroot, aggregation_period)
 dir.create(outputdir, recursive = TRUE, showWarnings = FALSE)
 
 ## TODO put these in config somehow

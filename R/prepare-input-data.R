@@ -12,11 +12,12 @@ options(dplyr.summarise.inform = FALSE)
 
 ## ## TESTING
 ## config = read_yaml('config/config_1.yml')
-## obspath = 'results/intermediate/obs.parquet'
-## fcstpath = 'results/intermediate/ensemble-forecast'
+## obspath = 'results_wrong/intermediate/obs.parquet'
+## fcstpath = 'results_wrong/intermediate/ensemble-forecast'
 ## aggregation_period = 'yr2to9_lag'
-## outputroot = 'results/exp2/analysis'
-## cwd = 'workflow/scripts'
+## outputroot = 'results/analysis'
+## cwd = 'workflow/decadal-prediction-scripts/R'
+## source(file.path(cwd, "utils.R"))
 
 config <- snakemake@config
 obspath <- snakemake@input[["obs"]]
@@ -101,6 +102,7 @@ ensemble_fcst <- get_hindcast_data_new(
   dataset, study_period, lead_times,
   vars = vars, months = months
 )
+
 ensemble_fcst_antecedent <- get_hindcast_data_new(
   dataset, study_period, lead_times,
   vars = antecedent_vars, months = antecedent_months

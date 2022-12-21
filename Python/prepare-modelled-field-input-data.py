@@ -24,3 +24,17 @@ def main(inputdir, outputdir, stations, config):
 
 if __name__ == '__main__':
     main()
+
+# stations = snakemake.input['stations']
+# station_metadata = pd.read_csv(stations)
+# station_ids = station_metadata['id'].to_list()
+# lat_coords = station_metadata['lat'].to_list()
+# lon_coords = station_metadata['lon'].to_list()
+# _ensemble_field_preprocessor(
+#     snakemake.config['input_data_root'],
+#     snakemake.params['outputdir'],
+#     station_ids,
+#     lat_coords,
+#     lon_coords,
+#     snakemake.config
+# )

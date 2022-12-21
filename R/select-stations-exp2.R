@@ -10,17 +10,25 @@ library(yaml)
 
 options(dplyr.summarise.inform = FALSE)
 
-## Extract configuration info
-if (sys.nframe() == 0L) {
-  args = commandArgs(trailingOnly=TRUE)
-  inputdir <- args[1]
-  outputfile <- args[2]
-  config <- read_yaml(args[3])
-  args = commandArgs()
-  m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-  cwd <- dirname(regmatches(args, m))
-}
-source(file.path(cwd, "utils.R"))
+config <- snakemake@config
+inputdir <- config[["input_data_root"]]
+outputfile <- snakemake@params[["outfile"]]
+## obspath <- snakemake@input[["obs"]]
+## fcstpath <- snakemake@input[["fcst"]]
+## aggregation_period <- snakemake@wildcards[["aggr"]]
+snakemake@source("utils.R")
+
+## ## Extract configuration info
+## if (sys.nframe() == 0L) {
+##   args = commandArgs(trailingOnly=TRUE)
+##   inputdir <- args[1]
+##   outputfile <- args[2]
+##   config <- read_yaml(args[3])
+##   args = commandArgs()
+##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
+##   cwd <- dirname(regmatches(args, m))
+## }
+## source(file.path(cwd, "utils.R"))
 config = parse_config_io(config, inputdir)
 
 ## ################################### ##

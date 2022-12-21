@@ -301,8 +301,8 @@ def _spatial_xarray_to_dataframe(x, varname, metadata):
 
 
 def _ensemble_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, lon_coords, config):
-    with open(config, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+    # with open(config, 'r') as f:
+    #     config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Collect ESMValTool output files
     rootdir = inputdir
@@ -375,8 +375,8 @@ def _ensemble_preprocessor(inputdir, outputdir, config):
     # Preprocessor for ensemble dataset which is
     # created by the two ESMValTOol jobs specified
     # in `02_run-esmvaltool-job.sh`
-    with open(config, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+    # with open(config, 'r') as f:
+    #     config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Collect ESMValTool output files
     # output_dir = config['output_data']['root']
@@ -878,8 +878,8 @@ def _extract_index(ds, index_name, column_name=None):
 
 def _parse_observed_inputs(config, inputdir):
     # Must be a way to avoid repeating this
-    with open(config, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+    # with open(config, 'r') as f:
+    #     config = yaml.load(f, Loader=yaml.FullLoader)
     observed_root = inputdir
     # TESTING
     # config = {
@@ -964,10 +964,10 @@ def _observed_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
     # ################# #
     # import iris
     # gpcc_filename = '/Users/simonmoulds/projects/decadal-flood-prediction/data-raw/observed_data/GPCC/precip.mon.total.2.5x2.5.v2018.nc'
-    gpcc_filename_interp = os.path.join(
-        outputdir,
-        os.path.basename(os.path.splitext(gpcc_filename)[0]) + '_interp.nc'
-    )
+    # gpcc_filename_interp = os.path.join(
+    #     outputdir,
+    #     os.path.basename(os.path.splitext(gpcc_filename)[0]) + '_interp.nc'
+    # )
     # FIXME - ideally use another dataset without missing data
     subprocess.run(['cdo', 'fillmiss', gpcc_filename, gpcc_filename_interp])
 
@@ -1076,8 +1076,8 @@ def _observed_preprocessor(inputdir, outputdir, config):
     hadsst_filename = input_filenames['HadSST']
     giss_filename = input_filenames['GISS']
     ncdc_filename = input_filenames['NCDC']
-    with open(config, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+    # with open(config, 'r') as f:
+    #     config = yaml.load(f, Loader=yaml.FullLoader)
 
     # ####################### #
     # Sea-surface temperature

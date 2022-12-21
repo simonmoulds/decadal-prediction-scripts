@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 
-import click
+# import click
 
 from utils import _observed_preprocessor
 
-@click.command()
-@click.option('-i', '--inputdir', default='.', help='Input directory')
-@click.option('-o', '--outputdir', default='.', help='Output directory')
-@click.option('--config', default='config.yml', help='YAML configuration file')
-def main(inputdir, outputdir, config):
-    _observed_preprocessor(inputdir, outputdir, config)
+# @click.command()
+# @click.option('-i', '--inputdir', default='.', help='Input directory')
+# @click.option('-o', '--outputdir', default='.', help='Output directory')
+# @click.option('--config', default='config.yml', help='YAML configuration file')
+# def main(inputdir, outputdir, config):
+#     _observed_preprocessor(inputdir, outputdir, config)
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()
+
+_observed_preprocessor(
+    snakemake.config['input_data_root'],
+    snakemake.params['outputdir'],
+    snakemake.config
+)
