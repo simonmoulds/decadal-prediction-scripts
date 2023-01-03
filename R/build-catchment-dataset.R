@@ -128,8 +128,8 @@ for (i in 1:n_stations) {
 
   ## Select discharge data for current station
   stn_id = station_ids[i]
-  lat <- metadata %>% filter(id %in% stn_id) %>% `$`(latitude)
-  lon <- metadata %>% filter(id %in% stn_id) %>% `$`(longitude)
+  ## lat <- metadata %>% filter(id %in% stn_id) %>% `$`(latitude)
+  ## lon <- metadata %>% filter(id %in% stn_id) %>% `$`(longitude)
 
   ## ensemble_fcst_local <- ensemble_fcst_field %>% filter(ID %in% stn_id) %>% collect()
   ## ensemble_fcst_local <- convert_to_local(ensemble_fcst, lat, lon)

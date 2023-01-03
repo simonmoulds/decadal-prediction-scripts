@@ -21,20 +21,20 @@ snakemake@source("utils.R")
 ## }
 ## source(file.path(cwd, "utils.R"))
 
-metadata = catalogue()
-
-names(metadata) = names(metadata) %>% gsub("-", "_", .)
+## metadata = catalogue()
+## names(metadata) = names(metadata) %>% gsub("-", "_", .)
 
 ## conn <- file(stations_file)
 ## station_ids <- readLines(conn)
 ## station_ids <- as.integer(station_ids)
 ## close(conn)
-stations <- read_csv(stations_file)
+## stations <- read_csv(stations_file)
+stations <- read_parquet(stations_file)
 station_ids <- stations %>% filter(source %in% "UKBN") %>% `$`(id)
 
-metadata <- metadata %>% filter(id %in% station_ids)
-## metadata$id <- as.numeric(metadata$id)
-station_ids <- metadata$id
+## metadata <- metadata %>% filter(id %in% station_ids)
+## ## metadata$id <- as.numeric(metadata$id)
+## station_ids <- metadata$id
 n_stations = length(station_ids)
 
 ## ################################### ##
@@ -44,8 +44,9 @@ n_stations = length(station_ids)
 pb = txtProgressBar(min=0, max=n_stations, initial=0)
 for (i in 1:n_stations) {
   stn_id = as.numeric(station_ids[i])
-  df = download_nrfa_data(stn_id, metadata)
-  if (any(is.na(df$ID))) stop()
+  df = download_nrfa_data(stn_id) #, metadata)
+  if (any(is.na(df$ID)))
+    stop()
   df %>%
     group_by(ID) %>%
     write_dataset(file.path(outputroot, "nrfa-discharge-summaries"), format = "parquet")
@@ -53,13 +54,13 @@ for (i in 1:n_stations) {
 }
 close(pb)
 
-## ################################### ##
-## 2 - Metadata                        ##
-## ################################### ##
+## ## ################################### ##
+## ## 2 - Metadata                        ##
+## ## ################################### ##
 
-## Drop columns with complex types
-df_cols <- which(sapply(metadata, FUN=function(x) inherits(x, "data.frame")))
-metadata %>%
-  dplyr::select(-df_cols) %>%
-  mutate(across(where(is.logical), as.integer)) %>%
-  write_parquet(file.path(outputroot, "nrfa-metadata.parquet"))
+## ## Drop columns with complex types
+## df_cols <- which(sapply(metadata, FUN=function(x) inherits(x, "data.frame")))
+## metadata %>%
+##   dplyr::select(-df_cols) %>%
+##   mutate(across(where(is.logical), as.integer)) %>%
+##   write_parquet(file.path(outputroot, "nrfa-metadata.parquet"))

@@ -453,7 +453,7 @@ get_hindcast_data <- function(dataset,
   ensemble_fcst_raw_complete
 }
 
-summarise_discharge_data <- function(x, metadata) {
+summarise_discharge_data <- function(x) {
 
   ## ## Previous POT analysis
   ## ## Neri et al [https://doi.org/10.1002/joc.5915]:
@@ -534,9 +534,9 @@ summarise_discharge_data <- function(x, metadata) {
   x
 }
 
-download_nrfa_data <- function(stn_id, metadata) {
+download_nrfa_data <- function(stn_id) { #, metadata) {
   ## TODO tidy up this function, giving user more control over which variables are derived
-  meta = metadata %>% filter(id %in% stn_id)
+  ## meta = metadata %>% filter(id %in% stn_id)
   ## Gauged daily flow [m3 s-1]
   gdf = get_ts(stn_id, "gdf") %>% as_tibble(rownames="time")
   ## ## Catchent daily rainfall [mm]
@@ -567,7 +567,7 @@ download_nrfa_data <- function(stn_id, metadata) {
     mutate(year = format(time, "%Y") %>% as.integer) %>%
     mutate(month = format(time, "%m") %>% as.integer)
 
-  x <- summarise_discharge_data(x, meta)
+  x <- summarise_discharge_data(x) #, meta)
   x
 }
 
