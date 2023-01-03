@@ -22,6 +22,7 @@ if (exists("snakemake")) {
   obspath <- snakemake@input[["obs"]]
   metadata <- snakemake@input[["metadata"]]
   aggregation_period <- snakemake@wildcards[["aggr"]]
+  stn_id <- snakemake@wildcards[["stn"]]
   outputroot <- snakemake@params[["outputdir"]]
   snakemake@source("utils.R")
 } else {
@@ -35,20 +36,6 @@ if (exists("snakemake")) {
   source(file.path(cwd, "utils.R"))
 }
 
-## if (sys.nframe() == 0L) {
-##   args = commandArgs(trailingOnly=TRUE)
-##   config = read_yaml(args[1])
-##   obspath = args[2]
-##   metadata = args[3]
-##   aggregation_period = args[4]
-##   outputroot = args[5]
-##   args = commandArgs()
-##   m <- regexpr("(?<=^--file=).+", args, perl=TRUE)
-##   cwd <- dirname(regmatches(args, m))
-## }
-## source(file.path(cwd, "utils.R")) # TODO eventually put utils in package
-## print(config[["aggregation_period"]][[aggregation_period]]$lead_time)
-## print(config[["aggregation_period"]][[aggregation_period]]$study_period)
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 config[["subset"]] <- parse_config_subset(config)
 
@@ -121,111 +108,113 @@ ensemble_fcst_error = read_parquet(
 ## ensemble_fcst_field = open_dataset("results/intermediate/ensemble-forecast-field/")
 ## observed_field = open_dataset("results/intermediate/observed-field")
 
-## Loop through catchments to create input datasets for statistical modelling
-cat(sprintf("Creating catchment dataset for accumulation period %s\n", label))
-pb = txtProgressBar(min=0, max=n_stations, initial=0)
-for (i in 1:n_stations) {
+## ## Loop through catchments to create input datasets for statistical modelling
+## ## cat(sprintf("Creating catchment dataset for accumulation period %s\n", label))
+## ## pb = txtProgressBar(min=0, max=n_stations, initial=0)
+## for (i in 1:n_stations) {
 
-  ## Select discharge data for current station
-  stn_id = station_ids[i]
-  ## lat <- metadata %>% filter(id %in% stn_id) %>% `$`(latitude)
-  ## lon <- metadata %>% filter(id %in% stn_id) %>% `$`(longitude)
+## ## Select discharge data for current station
+## stn_id = station_ids[i]
+## lat <- metadata %>% filter(id %in% stn_id) %>% `$`(latitude)
+## lon <- metadata %>% filter(id %in% stn_id) %>% `$`(longitude)
 
-  ## ensemble_fcst_local <- ensemble_fcst_field %>% filter(ID %in% stn_id) %>% collect()
-  ## ensemble_fcst_local <- convert_to_local(ensemble_fcst, lat, lon)
-  ## obs_local <- convert_to_local(obs, lat, lon)
+## ensemble_fcst_local <- ensemble_fcst_field %>% filter(ID %in% stn_id) %>% collect()
+## ensemble_fcst_local <- convert_to_local(ensemble_fcst, lat, lon)
+## obs_local <- convert_to_local(obs, lat, lon)
 
-  ## NB season_year is the year of December in DJFM
-  dis_djfm =
-    observed_discharge_data %>%
-    filter(ID %in% stn_id) %>%
-    filter(clim_season %in% "DJFM") %>%
-    arrange(season_year)
+## NB season_year is the year of December in DJFM
+dis_djfm =
+  observed_discharge_data %>%
+  filter(ID %in% stn_id) %>%
+  filter(clim_season %in% "DJFM") %>%
+  arrange(season_year)
 
-  offset = floor(start + (end - start) / 2) - 1
-  dis_djfm_centred = dis_djfm %>%
-    mutate(init_year = season_year - offset) %>%
-    rename_at(vars(starts_with("Q_"), starts_with("POT_")), function(x) paste0(x, "_centred")) %>%
-    dplyr::select(init_year, starts_with("Q_"), starts_with("POT"))
+offset = floor(start + (end - start) / 2) - 1
+dis_djfm_centred = dis_djfm %>%
+  mutate(init_year = season_year - offset) %>%
+  rename_at(vars(starts_with("Q_"), starts_with("POT_")), function(x) paste0(x, "_centred")) %>%
+  dplyr::select(init_year, starts_with("Q_"), starts_with("POT"))
 
-  ## Compute summary statistics for DJFM
-  dis_djfm_aggregated = rolling_fun(
-    dis_djfm$season_year,
-    dis_djfm,
-    cols = c(
-      "missing_pct",
-      "Q_max", "Q_mean", "Q_05", "Q_50", "Q_90", "Q_95",
-      "P_sum", "POT_1", "POT_2", "POT_3", "POT_4"
-    ),
-    funs = list(
-      missing_pct = mean,
-      Q_max = mean, Q_mean = mean, Q_05 = mean,
-      Q_50 = mean, Q_90 = mean, Q_95 = mean,
-      P_sum = mean, POT_1 = sum, POT_2 = sum,
-      POT_3 = sum, POT_4 = sum
-    ),
-    start = start, end = end
+## Compute summary statistics for DJFM
+dis_djfm_aggregated = rolling_fun(
+  dis_djfm$season_year,
+  dis_djfm,
+  cols = c(
+    "missing_pct",
+    "Q_max", "Q_mean", "Q_05", "Q_50", "Q_90", "Q_95",
+    "P_sum", "POT_1", "POT_2", "POT_3", "POT_4"
+  ),
+  funs = list(
+    missing_pct = mean,
+    Q_max = mean, Q_mean = mean, Q_05 = mean,
+    Q_50 = mean, Q_90 = mean, Q_95 = mean,
+    P_sum = mean, POT_1 = sum, POT_2 = sum,
+    POT_3 = sum, POT_4 = sum
+  ),
+  start = start, end = end
+)
+dis_djfm_aggregated <- dis_djfm_aggregated %>%
+  left_join(dis_djfm_centred, by = c("init_year"))
+
+## Join with complete timeseries and update missing_pct
+complete_annual_ts = tibble(init_year = study_period)
+dis_djfm_aggregated =
+  complete_annual_ts %>%
+  left_join(dis_djfm_aggregated, by=c("init_year")) %>%
+  mutate(missing_pct = ifelse(is.na(missing_pct), 100, missing_pct))
+
+## Save observed data (observed discharge + observed climate indices)
+standardize = function(x) return((x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE))
+obs_aggregated =
+  obs %>%
+  group_by(variable) %>%
+  filter(init_year %in% study_period) %>%
+  mutate(value=standardize(value)) %>%
+  pivot_wider(init_year, names_from="variable", values_from="value")
+
+## Join with observed discharge data
+dis_djfm_obs =
+  dis_djfm_aggregated %>%
+  left_join(obs_aggregated, by="init_year")
+## Write dataset to file
+dis_djfm_obs %>%
+  rename(year = init_year) %>%
+  mutate(lead_time = min(lead_tm), period = label, subset = "observed", ID = stn_id) %>%
+  arrange(year) %>%
+  group_by(ID, subset) %>%
+  ## group_by(subset, ID) %>%
+  write_dataset(output_dir, format = "parquet", hive_style = FALSE)
+
+## Save hindcast data (observed discharge + hindcast climate indices)
+for (k in 1:length(config$subset)) {
+  subset = config$subset[[k]]
+  ## TODO ensure `value` in ensemble_fcst is anomaly
+  ensemble_fcst_subset = create_ensemble_forecast(
+    ensemble_fcst_error,
+    ensemble_fcst,
+    vars = climate_vars,
+    model_select = subset$models,
+    project_select = subset$projects,
+    full = subset$full,
+    best_n = subset$best_n,
+    worst_n = subset$worst_n,
+    n_select = 20
   )
-  dis_djfm_aggregated <- dis_djfm_aggregated %>%
-    left_join(dis_djfm_centred, by = c("init_year"))
-
-  ## Join with complete timeseries and update missing_pct
-  complete_annual_ts = tibble(init_year = study_period)
-  dis_djfm_aggregated =
-    complete_annual_ts %>%
-    left_join(dis_djfm_aggregated, by=c("init_year")) %>%
-    mutate(missing_pct = ifelse(is.na(missing_pct), 100, missing_pct))
-
-  ## Save observed data (observed discharge + observed climate indices)
-  standardize = function(x) return((x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE))
-  obs_aggregated =
-    obs %>%
-    group_by(variable) %>%
-    filter(init_year %in% study_period) %>%
-    mutate(value=standardize(value)) %>%
-    pivot_wider(init_year, names_from="variable", values_from="value")
-
-  ## Join with observed discharge data
-  dis_djfm_obs =
+  fcst =
     dis_djfm_aggregated %>%
-    left_join(obs_aggregated, by="init_year")
-  ## Write dataset to file
-  dis_djfm_obs %>%
+    left_join(ensemble_fcst_subset, by = "init_year")
+  fcst %>%
     rename(year = init_year) %>%
-    mutate(lead_time = min(lead_tm), period = label, subset = "observed", ID = stn_id) %>%
+    mutate(lead_time = min(lead_tm), period = label, subset = subset$name, ID = stn_id) %>%
     arrange(year) %>%
-    group_by(subset, ID) %>%
-    write_dataset(output_dir, format = "parquet")
-
-  ## Save hindcast data (observed discharge + hindcast climate indices)
-  for (k in 1:length(config$subset)) {
-    subset = config$subset[[k]]
-    ## TODO ensure `value` in ensemble_fcst is anomaly
-    ensemble_fcst_subset = create_ensemble_forecast(
-      ensemble_fcst_error,
-      ensemble_fcst,
-      vars = climate_vars,
-      model_select = subset$models,
-      project_select = subset$projects,
-      full = subset$full,
-      best_n = subset$best_n,
-      worst_n = subset$worst_n,
-      n_select = 20
-    )
-    fcst =
-      dis_djfm_aggregated %>%
-      left_join(ensemble_fcst_subset, by = "init_year")
-    fcst %>%
-      rename(year = init_year) %>%
-      mutate(lead_time = min(lead_tm), period = label, subset = subset$name, ID = stn_id) %>%
-      arrange(year) %>%
-      group_by(subset, ID) %>%
-      write_dataset(output_dir, format = "parquet")
-  }
-  ## Update progress bar
-  setTxtProgressBar(pb, i)
+    group_by(ID, subset) %>%
+    ## group_by(subset, ID) %>%
+    write_dataset(output_dir, format = "parquet", hive_style = FALSE)
 }
-close(pb)
+##   ## Update progress bar
+##   setTxtProgressBar(pb, i)
+## }
+## close(pb)
 
 
 

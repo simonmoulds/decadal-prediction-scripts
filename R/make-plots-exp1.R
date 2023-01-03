@@ -1265,7 +1265,10 @@ ggsave(file.path(output_dir, "fig3.png"), plot = p, width = 6, height = 4.25, un
 ## ####################################################### ##
 
 r2 <-
-  open_dataset("results/analysis/yr2to9_lag/input") %>%
+  open_dataset(
+    "results/analysis/yr2to9_lag/input",
+    partitioning = c("ID", "subset")
+  ) %>%
   collect() %>%
   filter(subset %in% "observed") %>%
   group_by(ID) %>%

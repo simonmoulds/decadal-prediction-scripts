@@ -20,22 +20,29 @@ options(dplyr.summarise.inform = FALSE)
 ## cwd = 'workflow/scripts/'
 if (exists("snakemake")) {
   config <- snakemake@config
-  experiment <- snakemake@wildcards[["expm"]]
+  ## experiment <- snakemake@wildcards[["expm"]]
+  experiment <- snakemake@params[["experiment"]]
   aggregation_period <- snakemake@wildcards[["aggr"]]
+  stn_id <- snakemake@wildcards[["stn"]]
   method <- snakemake@params[["method"]]
   outputroot <- snakemake@params[["outputdir"]]
   snakemake@source("utils.R")
 } else {
   ## TESTING
   config <- read_yaml("config/config_1.yml")
-  experiment <- "observed"
-  aggregation_period <- "yr2"
+  experiment <- "hindcast"
+  aggregation_period <- "yr2to9_lag"
+  stn_id <- 25003
   method <- "cv"
   outputroot <- "results"
   cwd = "workflow/decadal-prediction-scripts/R"
   source(file.path(cwd, "utils.R"))
 }
 
+print(stn_id)
+print(aggregation_period)
+print(experiment)
+print(outputroot)
 ## if (sys.nframe() == 0L) {
 ##   args = commandArgs(trailingOnly=TRUE)
 ##   config = read_yaml(args[1])
@@ -54,12 +61,20 @@ config[["subset"]] <- parse_config_subset(config)
 config[["aggregation_period"]] <- parse_config_aggregation_period(config)
 config[["modelling"]] <- parse_config_modelling(config)
 
-output_dir = file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period)
+## output_dir = file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period)
+## if (!dir.exists(output_dir)) {
+##   dir.create(output_dir, recursive = TRUE)
+## }
+## dir.create(file.path(output_dir, "prediction"))
+## dir.create(file.path(output_dir, "simulation"))
+## dir.create(file.path(output_dir, "fit"))
+output_dir = file.path(outputroot, "analysis", experiment, aggregation_period, "gamlss")
+print(output_dir)
 if (!dir.exists(output_dir)) {
   dir.create(output_dir, recursive = TRUE)
 }
 dir.create(file.path(output_dir, "prediction"))
-dir.create(file.path(output_dir, "simulation"))
+## dir.create(file.path(output_dir, "simulation"))
 dir.create(file.path(output_dir, "fit"))
 
 metadata = catalogue()
@@ -70,11 +85,11 @@ experiment_conf = config$modelling[[experiment]]
 if (aggregation_period %in% experiment_conf$aggregation_periods) {
 
   ## Load input dataset
-  input_dir = file.path(outputroot, "analysis", aggregation_period, "input")
-  if (!dir.exists(input_dir)) {
-    next
-  }
-  ds <- open_dataset(input_dir) %>% collect()
+  input_dir = file.path(outputroot, "analysis", aggregation_period, "input", stn_id)
+  ## if (!dir.exists(input_dir)) {
+  ##   next
+  ## }
+  ds <- open_dataset(input_dir, partitioning = c("subset")) %>% collect() %>% mutate(ID = stn_id)
   ## In `ds`, column `year` currently represents the year of initialization.
   ## Here we change `year` to represent the first month of the prediction
   ## window, consistent with that used by the the ML/AI routines.
@@ -107,43 +122,51 @@ if (aggregation_period %in% experiment_conf$aggregation_periods) {
   print(sprintf("Fitting models with %s input data", aggregation_period))
   station_ids = ds$ID %>% unique() %>% sort()
   pb = txtProgressBar(min=0, max=length(station_ids), initial=0, title=pb_title)
-  for (k in 1:length(station_ids)) {
+  ## for (k in 1:length(station_ids)) {
 
-    ## ############################### ##
-    ## Prepare input data
-    ## ############################### ##
-    stn_id = station_ids[k]
+  ##   ## ############################### ##
+  ##   ## Prepare input data
+  ##   ## ############################### ##
+  ##   stn_id = station_ids[k]
+  catchment_data =
+    ds %>%
+    filter(ID %in% stn_id & year %in% experiment_conf$study_period)
+
+  ## Normalize discharge if continuous distribution
+  if (!experiment_conf$model_family == "PO") {
+    catchment_area = metadata[["catchment-area"]][metadata$id %in% stn_id] # km2
     catchment_data =
-      ds %>%
-      filter(ID %in% stn_id & year %in% experiment_conf$study_period)
+      catchment_data %>%
+      mutate(Q = Q * 24 * 60 * 60 / catchment_area / 1000 / 1000 * 1000) # m3/s -> mm/day
+  }
 
-    ## Normalize discharge if continuous distribution
-    if (!experiment_conf$model_family == "PO") {
-      catchment_area = metadata[["catchment-area"]][metadata$id %in% stn_id] # km2
-      catchment_data =
-        catchment_data %>%
-        mutate(Q = Q * 24 * 60 * 60 / catchment_area / 1000 / 1000 * 1000) # m3/s -> mm/day
-    }
+  ## Handle missing data
+  ## FIXME - this problem arises because we no longer download precipitation
+  if ("P_sum" %in% names(catchment_data))
+    catchment_data <- catchment_data %>% dplyr::select(-P_sum)
 
-    ## Handle missing data
-    ## FIXME - this problem arises because we no longer download precipitation
-    if ("P_sum" %in% names(catchment_data))
-      catchment_data <- catchment_data %>% dplyr::select(-P_sum)
+  exclude = catchment_data$missing_pct > 30 | !complete.cases(catchment_data)
+  if (experiment_conf$model_family == "GA") {
+    ## Cannot fit a Gamma distribution if the response variable contains zeroes
+    exclude = exclude | (catchment_data[[experiment_conf$predictand]] == 0.)
+  }
 
-    exclude = catchment_data$missing_pct > 30 | !complete.cases(catchment_data)
-    if (experiment_conf$model_family == "GA") {
-      ## Cannot fit a Gamma distribution if the response variable contains zeroes
-      exclude = exclude | (catchment_data[[experiment_conf$predictand]] == 0.)
-    }
+  if (!experiment_conf$model_family %in% c("GA", "PO")) {
+    msg <- paste0("Model family ", experiment_conf$model_family, " currently not supported")
+    stop(msg)
+  }
 
-    if (!experiment_conf$model_family %in% c("GA", "PO")) {
-      msg <- paste0("Model family ", experiment_conf$model_family, " currently not supported")
-      stop(msg)
-    }
-    ## If more than 33% of data points are missing then do not model this catchment
-    if (sum(exclude) > (length(exclude) * 0.33)) {
-      next
-    }
+  ## Only proceed if fewer than 33% of data points are missing
+  ## if (sum(exclude) > (length(exclude) * 0.33)) {
+  ##   stop("Hello, world")
+  ## }
+  if (sum(exclude) > (length(exclude) * 0.33)) {
+    ## Create empty directories to satisfy snakemake
+    dir.create(file.path(output_dir, "fit", stn_id), recursive = TRUE)
+    dir.create(file.path(output_dir, "prediction", stn_id), recursive = TRUE)
+
+  } else {
+
     catchment_data = catchment_data[!exclude,]
 
     ## Divide input data into subsets
@@ -184,7 +207,7 @@ if (aggregation_period %in% experiment_conf$aggregation_periods) {
         ) %>%
         group_by(ID, model, subset) %>%
         write_dataset(
-          file.path(output_dir, "fit"), format = "parquet"
+          file.path(output_dir, "fit"), format = "parquet", hive_style = FALSE
         )
 
       ## Now run prediction, using either forward chain or cv
@@ -213,7 +236,7 @@ if (aggregation_period %in% experiment_conf$aggregation_periods) {
         stop("`method` must be either 'forward' or 'cv'")
       }
       if (is.null(catchment_prediction)) {
-        next
+        stop("Hello, world")
       }
       ## Write output
       catchment_prediction %>%
@@ -224,28 +247,29 @@ if (aggregation_period %in% experiment_conf$aggregation_periods) {
         ) %>%
         group_by(ID, model, subset) %>% #predictand, subset) %>%
         write_dataset(
-          file.path(output_dir, "prediction"), format = "parquet"
+          file.path(output_dir, "prediction"), format = "parquet", hive_style = FALSE
         )
 
-      if (method == "forward") {
-        catchment_simulation %>%
-          mutate(
-            ID = stn_id,
-            date = NA,
-            subset = subset
-          ) %>%
-        group_by(ID, model, subset) %>% #predictand, subset) %>%
-        write_dataset(
-          file.path(output_dir, "simulation"), format = "parquet"
-        )
-      }
+      ## if (method == "forward") {
+      ##   catchment_simulation %>%
+      ##     mutate(
+      ##       ID = stn_id,
+      ##       date = NA,
+      ##       subset = subset
+      ##     ) %>%
+      ##   group_by(ID, model, subset) %>% #predictand, subset) %>%
+      ##   write_dataset(
+      ##     file.path(output_dir, "simulation"), format = "parquet", hive_style = FALSE
+      ##   )
+      ## }
+      ## }
+      ## setTxtProgressBar(pb, k)
     }
-    setTxtProgressBar(pb, k)
   }
-  close(pb)
-} else {
-  warning(paste0("Aggregation period ", aggregation_period, " not specified for experiment ", experiment))
 }
+## } else {
+##   warning(paste0("Aggregation period ", aggregation_period, " not specified for experiment ", experiment))
+## }
 
 ## ## TESTS
 ## ## Compare custom implementation of crpss with that in easyVerification

@@ -1360,7 +1360,9 @@ myfun <- function(x) {
 
 load_model_predictions <- function(config, experiment, aggregation_period) {
   predictions = open_dataset(
-    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
+    file.path(outputroot, "analysis", experiment, aggregation_period, "gamlss", "prediction"),
+    partitioning = c("ID", "model", "subset")
+    ## file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
   ) %>%
     collect() #%>%
     ## filter(subset %in% c("full", "best_n")) #%>%
@@ -1390,7 +1392,9 @@ load_model_simulations <- function(config, experiment, aggregation_period) {
 
 load_model_fit <- function(config, experiment, aggregation_period) {
   fit <- open_dataset(
-    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "fit")
+    ## file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "fit")
+    file.path(outputroot, "analysis", experiment, aggregation_period, "gamlss", "fit"),
+    partitioning = c("ID", "model", "subset")
   ) %>% collect()
   fit <- fit %>% mutate(period = aggregation_period)
   model_levels <- unique(fit$model)
@@ -1401,7 +1405,9 @@ load_model_fit <- function(config, experiment, aggregation_period) {
 
 load_skill_scores <- function(config, experiment, aggregation_period) {
   ds <- open_dataset(
-    file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
+    ## file.path(outputroot, "analysis", experiment, "gamlss", aggregation_period, "prediction")
+    file.path(outputroot, "analysis", experiment, aggregation_period, "gamlss", "prediction"),
+    partitioning = c("ID", "model", "subset")
   ) %>% collect()
   skill <- ds %>%
     group_by(ID, model, subset) %>%
