@@ -26,7 +26,8 @@ from utils import _ensemble_field_preprocessor
 #     main()
 
 stations = snakemake.input['stations']
-station_metadata = pd.read_csv(stations)
+# station_metadata = pd.read_csv(stations)
+station_metadata = pd.read_parquet(stations)
 station_ids = station_metadata['id'].to_list()
 lat_coords = station_metadata['lat'].to_list()
 lon_coords = station_metadata['lon'].to_list()

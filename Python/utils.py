@@ -13,16 +13,14 @@ import iris.pandas
 import xarray
 import pyarrow as pa
 import pyarrow.parquet as pq
+import multiprocessing as mp
 import yaml
 
-from functools import reduce
+from functools import reduce, partial
 from calendar import monthrange
 from tqdm import tqdm
 
 from esmvalcore import *
-
-# TESTING
-# from workflow.scripts.esmvalcore import *
 
 VALID_Y_NAMES = ['latitude', 'lat']
 VALID_X_NAMES = ['longitude', 'lon']
@@ -192,7 +190,7 @@ def _index_xarray_to_dataframe_new(x, varname, metadata):
 def _spatial_xarray_to_dataframe_new(x, varname, metadata):
     df = x.to_dataframe()
     df = df.reset_index()
-    keep_cols = ['ID', 'time', varname]
+    keep_cols = ['ID', 'lat', 'lon', 'time', varname]
     # keep_cols = ['ID', 'season_year', varname]
     drop_cols = [nm for nm in df if nm not in keep_cols]
     # keep_cols = ['time', 'ID', 'season_year', varname]
@@ -215,7 +213,7 @@ def _spatial_xarray_to_dataframe_new(x, varname, metadata):
     df['month'] = [tm.month for tm in df['time']]
     df = df.sort_values(['init_year', 'year', 'month']) #, 'season_year'])
     cols = [
-        'ID', 'year', 'month', # TODO change to ID
+        'ID', 'lat', 'lon', 'year', 'month', # TODO change to ID
         'project', 'source_id', 'mip', 'experiment',
         'member', 'init_year', 'variable', 'value'
     ]
@@ -300,6 +298,88 @@ def _spatial_xarray_to_dataframe(x, varname, metadata):
     return df
 
 
+# def worker_fun(f, lats, lons, outputdir, coord_label):
+#     metadata = _parse_filepath(f)
+#     ds = xarray.open_dataset(f)
+#     lon_coord = _get_xarray_longitude_name(ds)
+#     ds.coords[lon_coord] = (ds.coords[lon_coord] + 180) % 360 - 180
+#     ds = ds.sortby(ds[lon_coord])
+#     varname = _get_variable_name(ds)
+#     x = ds.sel(lat=lats, lon=lons, method='nearest')
+#     # # x = x.assign_coords(ID=station_ids)
+#     # df = _spatial_xarray_to_dataframe_new(x, varname, metadata)
+#     x['year'] = x['time.year']
+#     x['month'] = x['time.month']
+#     df = x.to_dataframe()
+#     df = df.reset_index()
+#     keep_cols = ['ID', 'lat', 'lon', 'year', 'month', varname]
+#     # keep_cols = ['ID', 'season_year', varname]
+#     drop_cols = [nm for nm in df if nm not in keep_cols]
+#     # keep_cols = ['time', 'ID', 'season_year', varname]
+#     # drop_cols = [nm for nm in df if nm not in keep_cols]
+#     df = df.drop(drop_cols, axis=1)
+#     # df = df.set_index(keep_cols)
+#     # df = df.reset_index()
+#     df = df.drop_duplicates(['lat', 'lon', 'year', 'month'])
+#     df = df.rename(
+#         {varname: 'value'}, axis="columns"
+#     )#.reset_index()
+#     df['project'] = metadata['project']
+#     df['source_id'] = metadata['model']
+#     # df['mip'] = metadata['mip']
+#     # df['experiment'] = metadata['experiment']
+#     df['member'] = metadata['ensemble']
+#     df['init_year'] = metadata['init_year']
+#     df['variable'] = varname
+#     df = df.sort_values(['init_year', 'year', 'month']) #, 'season_year'])
+#     cols = [
+#         'lat', 'lon', 'year', 'month',
+#         'project', 'source_id', #'mip', 'experiment',
+#         'member', 'init_year', 'variable', 'value'
+#     ]
+#     df = df[cols]
+#     df = df.merge(coord_label, on=['lat', 'lon'])
+#     tbl = pa.Table.from_pandas(df, preserve_index=False)
+#     pa.dataset.write_dataset(
+#         tbl,
+#         base_dir=os.path.join(outputdir, 'ensemble-forecast-field'),
+#         format="parquet",
+#         partitioning=pa.dataset.partitioning(
+#             pa.schema([
+#                 ("coord", pa.string()),
+#                 ("source_id", pa.string()),
+#                 ("member", pa.string()),
+#                 ("init_year", pa.string()),
+#                 ("variable", pa.string())
+#             ])
+#         ),
+#         use_threads=True,
+#         existing_data_behavior='overwrite_or_ignore'
+#     )
+def _make_coordinate_label(ds, lats, lons):
+    # Create coordinate label to use as partition
+    lon_coord = _get_xarray_longitude_name(ds)
+    ds.coords[lon_coord] = (ds.coords[lon_coord] + 180) % 360 - 180
+    ds = ds.sortby(ds[lon_coord])
+    try:
+        ds = ds.isel(time=0)
+    except ValueError:
+        pass
+    x = ds.sel(lat=lats, lon=lons, method='nearest')
+    # df = x.to_dataframe()
+    # df = df.reset_index()
+    df = x.to_dataframe().reset_index()
+    df = df[['ID', 'lat', 'lon']]
+    df['ew'] = 'e'
+    df.loc[df['lat'] < 0, ['ew']] = 'w'
+    df['ns'] = 'n'
+    df.loc[df['lon'] < 0, ['ns']] = 's'
+    df['lat_str'] = abs(df['lat']).astype(int).astype(str)
+    df['lon_str'] = abs(df['lon']).astype(int).astype(str)
+    df['coord'] = df[['ns', 'lat_str', 'ew', 'lon_str']].agg(''.join, axis=1)
+    coord_label = df[['ID', 'lat', 'lon', 'coord']]
+    return coord_label
+
 def _ensemble_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, lon_coords, config):
     # with open(config, 'r') as f:
     #     config = yaml.load(f, Loader=yaml.FullLoader)
@@ -326,10 +406,15 @@ def _ensemble_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
             + glob.glob(temp_field_datadir + "/*.nc")
         fs += recipe_fs
 
-    # TODO do not select seasons from data in EsmValTool
-    # This will allow us to carry out the analysis across all seasons
-    lats = xarray.DataArray(lat_coords, dims="ID")
-    lons = xarray.DataArray(lon_coords, dims="ID")
+    lats = xarray.DataArray(lat_coords, dims="ID", coords=dict(ID=station_ids))
+    lons = xarray.DataArray(lon_coords, dims="ID", coords=dict(ID=station_ids))
+
+    # Create coordinate label to use as partition
+    ds = xarray.open_dataset(fs[0])
+    coord_label = _make_coordinate_label(ds, lats, lons) # Write to file?
+    coord_label = coord_label[['lat', 'lon', 'coord']].drop_duplicates(['coord'])
+    ds.close()
+
     for i in tqdm(range(len(fs))):
         # f = '/Users/simonmoulds/projects/decadal-flood-prediction/data-raw/esmvaltool_output/recipe_s20_cmip6_autogen_20221214_120531/work/precip_field/precip_field/CMIP6_NorCPM1_Amon_dcppA-hindcast_s2010-r9i2p1f1_pr_gn_2011-2019.nc'
         f = fs[i]
@@ -339,36 +424,57 @@ def _ensemble_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
         ds.coords[lon_coord] = (ds.coords[lon_coord] + 180) % 360 - 180
         ds = ds.sortby(ds[lon_coord])
         varname = _get_variable_name(ds)
-        # OLD:
-        # x = _compute_mean_season(
-        #     ds, varname, metadata['init_year'],
-        #     season=[12, 1, 2, 3]
-        # )
-        # x = x.sel(lat=lats, lon=lons, method='nearest')
         x = ds.sel(lat=lats, lon=lons, method='nearest')
-        x = x.assign_coords(ID=station_ids)
-        df = _spatial_xarray_to_dataframe_new(x, varname, metadata)
+        # # x = x.assign_coords(ID=station_ids)
+        # df = _spatial_xarray_to_dataframe_new(x, varname, metadata)
+        x['year'] = x['time.year']
+        x['month'] = x['time.month']
+        df = x.to_dataframe()
+        df = df.reset_index()
+        keep_cols = ['ID', 'lat', 'lon', 'year', 'month', varname]
+        # keep_cols = ['ID', 'season_year', varname]
+        drop_cols = [nm for nm in df if nm not in keep_cols]
+        # keep_cols = ['time', 'ID', 'season_year', varname]
+        # drop_cols = [nm for nm in df if nm not in keep_cols]
+        df = df.drop(drop_cols, axis=1)
+        # df = df.set_index(keep_cols)
+        # df = df.reset_index()
+        df = df.drop_duplicates(['lat', 'lon', 'year', 'month'])
+        df = df.rename(
+            {varname: 'value'}, axis="columns"
+        )#.reset_index()
+        df['project'] = metadata['project']
+        df['source_id'] = metadata['model']
+        # df['mip'] = metadata['mip']
+        # df['experiment'] = metadata['experiment']
+        df['member'] = metadata['ensemble']
+        df['init_year'] = metadata['init_year']
+        df['variable'] = varname
+        df = df.sort_values(['init_year', 'year', 'month']) #, 'season_year'])
+        cols = [
+            'lat', 'lon', 'year', 'month',
+            'project', 'source_id', #'mip', 'experiment',
+            'member', 'init_year', 'variable', 'value'
+        ]
+        df = df[cols]
+        df = df.merge(coord_label, on=['lat', 'lon'])
         tbl = pa.Table.from_pandas(df, preserve_index=False)
-        pq.write_to_dataset(
+        pa.dataset.write_dataset(
             tbl,
-            root_path = os.path.join(outputdir, 'ensemble-forecast-field'),
-            partition_cols = ['source_id', 'member', 'init_year', 'variable']
+            base_dir=os.path.join(outputdir, 'ensemble-forecast-field'),
+            format="parquet",
+            partitioning=pa.dataset.partitioning(
+                pa.schema([
+                    ("coord", pa.string()),
+                    ("source_id", pa.string()),
+                    ("member", pa.string()),
+                    ("init_year", pa.string()),
+                    ("variable", pa.string())
+                ])
+            ),
+            use_threads=True,
+            existing_data_behavior='overwrite_or_ignore'
         )
-        # OLD:
-        # # Antecedent conditions [only for prec and temp]
-        # if varname in ['precip_field', 'temp_field']:
-        #     x = _compute_mean_season(
-        #         ds, varname, metadata['init_year'], season=[9, 10, 11]
-        #     )
-        #     x = x.sel(lat=lats, lon=lons, method='nearest')
-        #     x = x.assign_coords(ID=station_ids)
-        #     df = _spatial_xarray_to_dataframe_new(x, varname, metadata)
-        #     tbl = pa.Table.from_pandas(df, preserve_index=False)
-        #     pq.write_to_dataset(
-        #         tbl,
-        #         root_path = os.path.join(outputdir, 'ensemble-forecast-field'),
-        #         partition_cols = ['source_id', 'member', 'init_year', 'variable']
-        #     )
 
 
 def _ensemble_preprocessor(inputdir, outputdir, config):
@@ -946,17 +1052,17 @@ def _observed_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
     def myfun(x, varname):
         df = x.to_dataframe()
         df = df.reset_index()
-        keep_cols = ['time', 'ID', varname]
+        keep_cols = ['time', 'ID', 'lat', 'lon', varname]
         drop_cols = [nm for nm in df if nm not in keep_cols]
         df = df.drop(drop_cols, axis=1)
-        df = df.set_index(['time', 'ID'])
-        df = df.reset_index()
+        # df = df.set_index(['time', 'ID'])
+        # df = df.reset_index()
         df = df.rename(
             {varname: 'value'}, axis="columns"
         )
         df['year'] = [tm.year for tm in df['time']]
         df['month'] = [tm.month for tm in df['time']]
-        df = df[['ID', 'year', 'month', 'value']]
+        df = df[['ID', 'lat', 'lon', 'year', 'month', 'value']]
         return df
 
     # ################# #
@@ -964,10 +1070,10 @@ def _observed_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
     # ################# #
     # import iris
     # gpcc_filename = '/Users/simonmoulds/projects/decadal-flood-prediction/data-raw/observed_data/GPCC/precip.mon.total.2.5x2.5.v2018.nc'
-    # gpcc_filename_interp = os.path.join(
-    #     outputdir,
-    #     os.path.basename(os.path.splitext(gpcc_filename)[0]) + '_interp.nc'
-    # )
+    gpcc_filename_interp = os.path.join(
+        outputdir,
+        os.path.basename(os.path.splitext(gpcc_filename)[0]) + '_interp.nc'
+    )
     # FIXME - ideally use another dataset without missing data
     subprocess.run(['cdo', 'fillmiss', gpcc_filename, gpcc_filename_interp])
 
@@ -983,17 +1089,18 @@ def _observed_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
     })
     ds_regrid = _regrid_cube(source, target)
     ds = xarray.DataArray.from_iris(ds_regrid)
+    coord_label = _make_coordinate_label(ds, lats, lons)
 
     # Ensure the dataset has longitudes from -180 to +180
     lon_coord = _get_xarray_longitude_name(ds)
     ds.coords[lon_coord] = (ds.coords[lon_coord] + 180) % 360 - 180
     ds = ds.sortby(ds[lon_coord])
 
-    lats = xarray.DataArray(lat_coords, dims="ID")
-    lons = xarray.DataArray(lon_coords, dims="ID")
+    lats = xarray.DataArray(lat_coords, dims="ID", coords=dict(ID=station_ids))
+    lons = xarray.DataArray(lon_coords, dims="ID", coords=dict(ID=station_ids))
     x = ds.sel(lat=lats, lon=lons, method='nearest')
+    # x = x.assign_coords(ID=station_ids)
 
-    x = x.assign_coords(ID=station_ids)
     gpcc = myfun(x, 'precip')
     gpcc['days_in_month'] = gpcc.apply(
         lambda x: monthrange(int(x['year']), int(x['month']))[1],
@@ -1002,6 +1109,9 @@ def _observed_field_preprocessor(inputdir, outputdir, station_ids, lat_coords, l
     gpcc['value'] /= gpcc['days_in_month']
     gpcc = gpcc[['ID', 'year', 'month', 'value']]
     prec_df = gpcc.rename(columns={'value': 'precip_field'})
+
+    prec_df = prec_df.merge(coord_label, on=['ID'])
+    # TODO drop_duplicate after merging
 
     # ################# #
     # Temperature fields
