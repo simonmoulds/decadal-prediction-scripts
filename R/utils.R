@@ -370,7 +370,8 @@ get_hindcast_data_new <- function(dataset,
   ens_fcst <- ens_fcst %>% collect()
   ens_fcst <- ens_fcst %>% pivot_wider(names_from=variable, values_from=value)
   ## Restrict to complete seasons
-  group_vars <- c("season_year", "project", "mip", "source_id", "member", "init_year")
+  group_vars <- c("season_year", "project", "source_id", "member", "init_year")
+  ## group_vars <- c("season_year", "project", "mip", "source_id", "member", "init_year")
   ens_fcst <- ens_fcst %>%
     group_by_at(group_vars) %>%
     filter(n() == length(months)) %>%
@@ -392,7 +393,8 @@ get_hindcast_data_new <- function(dataset,
   ens_fcst_complete <- ens_fcst_complete %>% ensemble_fcst_unit_conversion()
 
   ## Aggregate over lead times
-  group_vars = c("project", "mip", "source_id", "member", "init_year")
+  ## group_vars = c("project", "mip", "source_id", "member", "init_year")
+  group_vars = c("project", "source_id", "member", "init_year")
   ens_fcst_complete <-
     ens_fcst_complete %>%
     group_by_at(group_vars) %>%

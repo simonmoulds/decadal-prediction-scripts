@@ -9,15 +9,26 @@ library(arrow)
 options(bitmapType = "cairo")
 options(dplyr.summarise.inform = FALSE)
 
-config <- snakemake@config
-obspath <- snakemake@input[["obs"]]
-fcstpath <- snakemake@input[["fcst"]]
-stations <- snakemake@input[["stations"]]
-aggregation_period <- snakemake@wildcards[["aggr"]]
-outputroot <- snakemake@params[["outputdir"]]
-snakemake@source("utils.R")
+if (exists("snakemake")) {
+  config <- snakemake@config
+  obspath <- snakemake@input[["obs"]]
+  fcstpath <- snakemake@input[["fcst"]]
+  grid_coord <- snakemake@wildcards[["grid"]]
+  aggregation_period <- snakemake@wildcards[["aggr"]]
+  outputroot <- snakemake@params[["outputdir"]]
+  snakemake@source("utils.R")
+} else {
+  ## TESTING
+  config <- read_yaml("config/config_1.yml")
+  obspath <- "results/intermediate/observed-field.parquet"
+  fcstpath <- "results/intermediate/ensemble-forecast-field"
+  grid_coord <- "s50e115"
+  aggregation_period <- "yr2to5"
+  outputroot <- "results"
+  cwd = "workflow/decadal-prediction-scripts/R"
+  source(file.path(cwd, "utils.R"))
+}
 
-## source(file.path(cwd, "utils.R"))
 config[["aggregation_period"]] = parse_config_aggregation_period(config)
 
 ## Parse aggregation period specification
@@ -32,8 +43,6 @@ outputdir = file.path(outputroot, aggregation_period)
 dir.create(outputdir, recursive = TRUE, showWarnings = FALSE)
 
 ## TODO put these in config somehow
-## vars <- c("nao", "ea", "amv", "european_precip", "uk_precip", "uk_temp")
-## antecedent_vars <- c("european_precip")
 vars <- c("precip_field", "temp_field")
 antecedent_vars <- c("precip_field")
 months <- c(12, 1, 2, 3)
@@ -48,24 +57,16 @@ if (antecedent_months[1] >= months[1]) {
   year_offset <- 0
 }
 
-## Observed field data
-metadata <- read_csv(stations, show_col_types = FALSE)
-
-## FOR TESTING ONLY
-metadata <- metadata %>% filter(source %in% "UKBN")
-
-station_ids <- metadata$id
-n_stations <- length(station_ids)
-
 ## ################################### ##
 ## Load observed data
 ## ################################### ##
 
-dataset <- open_dataset(obspath)
-## pb = txtProgressBar(min=0, max=n_stations, initial=0)
-## for (i in 1:length(station_ids)) {
-## id <- station_ids[i]
-subdataset <- dataset %>% filter(ID %in% id) %>% collect()
+dataset <- read_parquet(obspath)
+subdataset <-
+  dataset %>%
+  filter(coord %in% grid_coord) %>%
+  collect()
+
 obs_field <- get_obs_new(
   subdataset,
   study_period,
@@ -87,38 +88,36 @@ obs_field_antecedent <-
   mutate(init_year = init_year + year_offset)
 
 ## Join together and save output as dataset
-obs_field <- rbind(obs_field, obs_field_antecedent)
+obs_field <-
+  rbind(obs_field, obs_field_antecedent) %>%
+  arrange(init_year, variable)
 obs_field <-
   obs_field %>%
-  mutate(ID = id, .before = init_year) %>%
+  mutate(coord = grid_coord, .before = init_year) %>%
   arrange(init_year, variable) %>%
-  group_by(ID) %>%
+  group_by(coord) %>%
   write_dataset(
     file.path(outputdir, "observed-field"),
     format = "parquet"
   )
-##   ## Update progress bar
-##   setTxtProgressBar(pb, i)
-## }
-## close(pb)
 
 ## ################################### ##
 ## Load modelled data
 ## ################################### ##
 
 lead_times <- lead_tm
-dataset <- open_dataset(fcstpath)
-## pb = txtProgressBar(min=0, max=n_stations, initial=0)
-## for (i in 1:length(station_ids)) {
-## id <- station_ids[i]
-## TODO test this function on ARC - currently taking far too long here
-subdataset <- dataset %>% filter(ID %in% id) # & source_id %in% "CanCM4")
-system.time(ensemble_fcst <- get_hindcast_data_new(
-  subdataset, study_period, lead_times,
+dataset <- open_dataset(
+  file.path(fcstpath, grid_coord),
+  partitioning = c("source_id", "member", "variable")
+) %>% collect()
+
+ensemble_fcst <- get_hindcast_data_new(
+  dataset, study_period, lead_times,
   vars = vars, months = months
-))
+)
+
 ensemble_fcst_antecedent <- get_hindcast_data_new(
-  subdataset, study_period, lead_times,
+  dataset, study_period, lead_times,
   vars = antecedent_vars, months = antecedent_months
 )
 ensemble_fcst_antecedent <-
@@ -130,13 +129,10 @@ ensemble_fcst_antecedent <-
 ensemble_fcst <- rbind(ensemble_fcst, ensemble_fcst_antecedent)
 ensemble_fcst <-
   ensemble_fcst %>%
-  mutate(ID = id) %>%
-  group_by(ID) %>%
+  mutate(coord = grid_coord) %>%
+  group_by(coord) %>%
   write_dataset(
     file.path(outputdir, "ensemble-forecast-field"),
-    format = "parquet"
+    format = "parquet",
+    hive_style = FALSE
   )
-##   ## Update progress bar
-##   setTxtProgressBar(pb, i)
-## }
-## close(pb)

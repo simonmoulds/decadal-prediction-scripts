@@ -97,7 +97,10 @@ write_parquet(
 ## ################################### ##
 
 lead_times <- lead_tm
-dataset <- open_dataset(fcstpath)
+dataset <- open_dataset(
+  fcstpath,
+  partitioning = c("source_id", "member", "init_year", "variable")
+)
 ensemble_fcst <- get_hindcast_data_new(
   dataset, study_period, lead_times,
   vars = vars, months = months
