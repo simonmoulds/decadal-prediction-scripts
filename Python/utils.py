@@ -435,13 +435,13 @@ def _ensemble_field_preprocessor(inputdir,
         config['ensemble_data']['cmip5']['subdirectory'] \
         + config['ensemble_data']['cmip6']['subdirectory']
 
-    # TESTING
-    rootdir = '../data-raw'
-    recipe_output_dirs = [
-        'esmvaltool_output/recipe_s20_cmip5_autogen_20221214_103843',
-        'esmvaltool_output/recipe_s20_cmip6_autogen_20221214_120531',
-        'ncar_prec_data/recipe1'
-    ]
+    # # TESTING
+    # rootdir = '../data-raw'
+    # recipe_output_dirs = [
+    #     'esmvaltool_output/recipe_s20_cmip5_autogen_20221214_103843',
+    #     'esmvaltool_output/recipe_s20_cmip6_autogen_20221214_120531',
+    #     'ncar_prec_data/recipe1'
+    # ]
 
     fs = []
     for recipe in recipe_output_dirs:
